@@ -34,7 +34,6 @@ import json
 import os
 import sys
 import time
-import buke_km
 
 from . import runmode
 from .args import parse_args
@@ -58,6 +57,14 @@ from .config import DEFAULT_JSONL, DEFAULT_LOG, TRIGGER_VK
 def main(argv=None):
     """程序主流程。argv 传 None 时读真实命令行；测试时可以传一个列表。"""
     a = parse_args(argv)
+
+    # --check 就地办完，而且必须排在 dispatch 前面：往下走会判成"该转后台"，
+    # 那就跑到一个看不见输出的子进程里去了。也不走到 engine 那一句 ——
+    # 自检跟模型没关系，没有 engine 文件也该能跑。
+    if a.check:
+        from .selfcheck import run as run_check
+        run_check(print)
+        return
 
     # --stop / --status 就地办完；默认的"一直监听"在这里转成后台进程。
     # 返回 True 说明这个进程的活已经干完，不用再往下走。
@@ -142,15 +149,21 @@ def _print_banner(say, a, det, coords_mode, gate, follower):
         say(f'跟随方式  从准星朝目标推（增益 {a.gain} 死区 {a.deadzone} 像素，'
             f'最低置信度 {a.follow_conf}）')
 
+    if follower is not None and a.follow_trace:
+        say('逐帧判定  开（--follow-trace，每帧一句"跟随 ..."）')
+
 
 class _LazyMover:
     """真要动鼠标的那一刻，才去创建 buke_km。
 
-    两个原因：
-      1. 创建它会立刻加载 DLL（驱动没装、不是管理员、授权联网不通，
+    三个原因：
+      1. 创建它会立刻加载 DLL（驱动没装、不是管理员、联网探测不通，
          都会在这一步炸）。跑 --status / --stop、或者只想看看检测效果时，
          不该被它拖住，更不该因为它没装好就整个程序起不来。
       2. 开关一直关着的话，DLL 一次都不用碰。
+      3. buke_km 这个包本身也可能没装好。所以连 import 都放到这里，
+         不放模块顶层 —— 顶层 import 失败的话，start.py 一启动就抛回溯，
+         连 --check 都跑不起来，而那正是唯一能告诉用户"包没装好"的命令。
 
     出错不在这里吞：抛给 Follower，由它去重后报一次。
     留着实例不重建，是因为重试的代价只是再调一次接口 ——
@@ -162,6 +175,7 @@ class _LazyMover:
 
     def __call__(self, dx, dy):
         if self._km is None:
+            import buke_km
             self._km = buke_km.BukeKm()
         self._km.move_relative(int(dx), int(dy))
 
@@ -198,6 +212,9 @@ def _build_follow(a, say):
         min_confidence=a.follow_conf,
         gain=a.gain,
         deadzone=a.deadzone,
+        # --follow-trace 时把每帧判定过程说给用户听。
+        # 不加就是 None，Follower 里连字符串都不拼。
+        trace=say if a.follow_trace else None,
     )
     return gate, follower, mover
 
@@ -307,6 +324,9 @@ def _run_frames(a, det, out, log, coords, coords_mode, say, gate, follower):
             # Follower 里会把"没目标""已经对准"当成正常情况不吭声，
             # 只有真出错才返回一句话，而且是重复的不说 ——
             # 不然 out\bg.log 会被同一句话刷满。
+            # 想看每帧到底判成了什么，加 --follow-trace：那种详细的话由
+            # Follower 自己直接 say 出来（走 trace 回调），不从这里返回，
+            # 免得和"出错才说"这个去重逻辑搅在一起。
             if follower is not None:
                 msg = follower.update(out.get_centers())
                 if msg:

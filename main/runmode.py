@@ -17,8 +17,8 @@ r"""前台 / 后台怎么跑，这个文件说了算。
     其余情况（默认，一直监听）            -> 后台
 
     一句话：不想要输出就默认后台；只要你要看得见东西（--record /
-    --log / --jsonl / --stdout-coords / --json-coords / --coords-file），
-    那就得是前台，不然你什么也看不到。
+    --log / --jsonl / --stdout-coords / --json-coords / --coords-file /
+    --follow-trace），那就得是前台，不然你什么也看不到。
 
 后台进程怎么停？
     python start.py --stop
@@ -120,7 +120,7 @@ def is_foreground(a):
     # 剩下的都是"一直监听"。但如果用户要看得见的输出，就只能前台，
     # 因为后台进程没有窗口，print 出去的东西没人能看见。
     wants_visible = [a.coords_file, a.record, a.log, a.jsonl,
-                     a.stdout_coords, a.json_coords]
+                     a.stdout_coords, a.json_coords, a.follow_trace]
     return any(wants_visible)
 
 
@@ -166,9 +166,11 @@ def _child_cmd(a):
 
     必须带 --fg，否则子进程又会判断成"该转后台"，无限套娃。
 
-    只转发会影响检测结果的参数（engine / region / conf / iou / interval）。
+    转发所有会影响子进程行为的参数：检测那几个（engine / region / conf /
+    iou / interval）和跟随那几个（always / follow-conf / gain / deadzone）。
     不转发 --record / --stdout-coords / --json-coords：
     后台模式下坐标固定写进 BG_COORDS，用不上那些。
+    --follow-trace 也不用转发 —— 它本身就会把进程留在前台。
     """
     cmd = [
         _pythonw(), ENTRY,
@@ -186,6 +188,18 @@ def _child_cmd(a):
         cmd += ['--conf', str(a.conf)]
     if a.iou is not None:
         cmd += ['--iou', str(a.iou)]
+
+    # 跟随那几个参数也必须转发。不转发的话子进程用的是自己的默认值，
+    # 用户敲的 --always / --gain 这些在转后台那一步就被丢掉了 ——
+    # 表现是"参数填了跟没填一样"，而且默认是后台，所以几乎必然踩到。
+    if a.always:
+        cmd += ['--always']
+    if a.follow_conf is not None:
+        cmd += ['--follow-conf', str(a.follow_conf)]
+    if a.gain is not None:
+        cmd += ['--gain', str(a.gain)]
+    if a.deadzone is not None:
+        cmd += ['--deadzone', str(a.deadzone)]
     return cmd
 
 

@@ -68,6 +68,11 @@ def build_parser():
     p.add_argument('--deadzone', type=int, default=AIM_DEADZONE,
                    help='死区半径（像素）。目标离准星这么近就不动鼠标了，'
                         '免得准星跟着检测框一起抖')
+    p.add_argument('--follow-trace', action='store_true',
+                   help='每帧打印一句判定：这帧有没有检出人、分数够不够、'
+                        '推了多少、还是已经在死区里。用来确认跟随到底有没有生效 —— '
+                        '不加的话"没检出人"和"跟丢了"从外面看一模一样，'
+                        '都是鼠标不动、什么都不打印')
 
     # ---- 运行方式（前台 / 后台）----
     p.add_argument('--fg', action='store_true',
@@ -78,6 +83,9 @@ def build_parser():
                    help='停掉后台进程，然后退出')
     p.add_argument('--status', action='store_true',
                    help='看看后台进程还在不在，然后退出')
+    p.add_argument('--check', action='store_true',
+                   help='只做一次自检然后退出：权限、驱动、屏幕、鼠标能不能动、'
+                        '右键认不认得到。不用 engine，也不开机检测')
 
     # ---- 坐标输出（给别的程序读）----
     group = p.add_mutually_exclusive_group()

@@ -2,8 +2,8 @@
 """调用点检查：改了函数签名，调用那行忘了跟着改 —— 静态扫出来。
 
 为什么需要这个：
-    main/app.py 【在这台机器上 import 不起来】（buke_km 是 Windows 的 DLL，
-    detector.py 又要 tensorrt），所以它的代码路径一次都跑不到。
+    main/app.py 【在这台机器上 import 不起来】（detector.py 顶层就要
+    tensorrt，这台机器上没有），所以它的代码路径一次都跑不到。
     改 _print_banner 的时候给定义加了 follower 参数、调用那行没改，
     测试全绿、本机毫无反应，一直到用户在 Windows 上启动才炸 TypeError。
 

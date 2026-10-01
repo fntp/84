@@ -31,10 +31,20 @@ from main import runmode                                              # noqa: E4
 def _args(**over):
     """造一个"参数解析完"的对象。只写测试用得上的字段，其余给默认值。
 
-    默认值刻意跟真实的"什么都不填"一致：一直监听、没要任何输出。
+    默认值刻意跟真实的"什么都不填"一致：一直监听、没要任何输出、跟随参数没动过。
+
+    跟随那几个字段（always / follow_conf / gain / deadzone）默认都是 None，
+    和 args.py 里一致 —— None 表示"用户没说"，_child_cmd 就是靠这个决定转不转发。
+    follow_trace 默认 False 但【必须在】，因为 is_foreground 要读它：
+    少了这个字段整个文件都是 AttributeError，而不是某一条测试失败。
     """
     base = dict(fg=False, bg=False, loop=0, coords_file=None, record=False,
-                log=None, jsonl=None, stdout_coords=False, json_coords=False)
+                log=None, jsonl=None, stdout_coords=False, json_coords=False,
+                follow_trace=False, always=False, follow_conf=None, gain=None,
+                deadzone=None,
+                # 下面几个只有 _child_cmd 用得上，默认值和 args.py 一样
+                interval=0.05, engine='weights/best.engine', region=None,
+                conf=None, iou=None)
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -174,6 +184,47 @@ def test_wanting_visible_output_forces_foreground():
     assert runmode.is_foreground(_args(log='a.log')) is True
     assert runmode.is_foreground(_args(jsonl='a.jsonl')) is True
     assert runmode.is_foreground(_args(coords_file='c.jsonl')) is True
+
+
+def test_follow_trace_forces_foreground():
+    """--follow-trace 也是"要看得见的东西"，必须留在前台。
+
+    这个开关加出来就是为了排查"跟随到底有没有生效"，而默认是后台跑、
+    屏幕上什么都不打。要是它没把进程留在前台，用户加了它还是什么都看不到 ——
+    那就等于白加，而且他会以为是自己加错了。
+    """
+    assert runmode.is_foreground(_args(follow_trace=True)) is True
+
+
+# ----------------------------------------------------------------------
+# 四、转后台时参数要跟着走
+# ----------------------------------------------------------------------
+
+def test_child_cmd_forwards_follow_flags():
+    """转后台那一步必须把跟随参数原样转发给子进程。
+
+    不转发的话子进程用默认值，用户敲的 --always / --gain 在转后台时被丢掉，
+    表现是"参数填了跟没填一样"。而默认就是走后台这条路，所以几乎必然踩到。
+    """
+    cmd = runmode._child_cmd(_args(always=True, follow_conf=0.3, gain=0.8,
+                                   deadzone=5))
+    joined = ' '.join(cmd)
+    assert '--always' in cmd
+    for flag, val in (('--follow-conf', '0.3'), ('--gain', '0.8'),
+                      ('--deadzone', '5')):
+        assert joined.count(f'{flag} {val}') == 1, (flag, joined)
+
+
+def test_child_cmd_omits_follow_flags_nobody_set():
+    """用户没填的跟随参数不要转发。
+
+    转发一个 None 会拼出 "--gain None"，子进程的参数解析直接报错退出，
+    而且报错只在 out\\bg.log 里，用户看到的是"启动完什么都没发生"。
+    """
+    cmd = runmode._child_cmd(_args())
+    assert '--always' not in cmd
+    for flag in ('--follow-conf', '--gain', '--deadzone'):
+        assert flag not in cmd
 
 
 # ----------------------------------------------------------------------
