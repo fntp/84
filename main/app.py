@@ -81,7 +81,7 @@ def main(argv=None):
 
     det = Detector(a.engine)
     gate, follower, mover = _build_follow(a, say)
-    _print_banner(say, a, det, coords_mode, gate)
+    _print_banner(say, a, det, coords_mode, gate, follower)
 
     log, out, coords = _open_recording(a, coords_mode)
 
