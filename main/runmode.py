@@ -283,7 +283,10 @@ def start_background(a):
     return ('已在后台启动，进程号 %d。\n'
             '坐标实时写在：%s\n'
             '启动日志：    %s\n'
-            '看状态：start.py --status    停掉：start.py --stop'
+            '看状态：start.py --status    停掉：start.py --stop\n'
+            '右键开关开没开、跟随报没报错，都记在上面那个日志里。\n'
+            '跟随没反应先自检：start.py --check    '
+            '想看每一帧的判定：start.py --follow-trace（会在前台跑）'
             % (p.pid, BG_COORDS, BG_LOG))
 
 
