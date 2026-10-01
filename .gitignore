@@ -1,0 +1,11 @@
+# 模型文件/大型二进制产物（不入库）
+weights/
+*.engine
+*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
