@@ -19,6 +19,7 @@ import argparse
 import itertools
 import os
 import sys
+import tempfile
 
 # 本文件在 <项目根>\test\ 下，把 <项目根> 加到搜索路径才能 import main 包
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -225,6 +226,151 @@ def test_child_cmd_omits_follow_flags_nobody_set():
     assert '--always' not in cmd
     for flag in ('--follow-conf', '--gain', '--deadzone'):
         assert flag not in cmd
+
+
+# ----------------------------------------------------------------------
+# 五、--status 里带出来的日志尾巴
+# ----------------------------------------------------------------------
+
+def test_tail_returns_the_last_lines_in_order():
+    """取的是最后几行，而且顺序不能反 —— 反了就看不出"最后发生了什么"。"""
+    with _temp_file('a\nb\nc\nd\ne\n') as path:
+        assert runmode.tail(path, lines=2) == ['d', 'e']
+        assert runmode.tail(path, lines=10) == ['a', 'b', 'c', 'd', 'e']
+
+
+def test_tail_skips_blank_lines():
+    """空行不算一行。
+
+    bg.log 是追加写的，一轮一轮之间会留下空行。不跳过的话，
+    "最后 6 行"可能全是空行 —— 用户看到的是一段空白，
+    比不说还糟。
+    """
+    with _temp_file('a\n\n\nb\n\n') as path:
+        assert runmode.tail(path, lines=2) == ['a', 'b']
+
+
+def test_tail_reads_only_the_end():
+    """只从文件末尾读一小段，不整个读进内存。
+
+    这是写这个函数的原因：bg.log 跨很多次运行一直追加，几百兆很正常，
+    整个读会把 --status 这个本该立刻返回的命令拖住。所以开头那一大段
+    根本不该被读到 —— 用一个开头特有的标记来证明它确实没读。
+    """
+    head = 'BEGIN-OF-FILE\n' + ('填\n' * 200000)      # 约 600KB
+    with _temp_file(head + 'LAST-1\nLAST-2\n') as path:
+        got = runmode.tail(path, lines=2)
+        assert got == ['LAST-1', 'LAST-2']
+        assert 'BEGIN-OF-FILE' not in got
+
+
+def test_tail_survives_a_character_cut_in_half():
+    """从中间截断可能把某个汉字切成两半，不能因此抛异常。
+
+    截断点落在哪个字上完全看文件长度，是必然会遇到的情况，
+    不是"万一"。日志内容本来就不重要，坏掉的那个字用替换字符顶掉就行 ——
+    但要是这里抛了 UnicodeDecodeError，--status 就整个不能用。
+    """
+    with _temp_file('中文行\n' * 500 + '最后一行\n', binary=True) as path:
+        got = runmode.tail(path, lines=1)
+        assert got == ['最后一行']
+
+
+def test_tail_of_a_missing_file_is_empty_not_an_error():
+    """文件不存在就返回空表。
+
+    后台从没起过的时候 bg.log 就是不存在，那正是 --status 最常见的用法。
+    这里抛异常的话，用户第一次敲 --status 看到的是回溯。
+    """
+    assert runmode.tail('/nonexistent/definitely/not/here.log') == []
+
+
+def test_status_text_says_what_to_do_when_nothing_is_running():
+    """没有 pid 文件时，要直接告诉用户怎么启动。"""
+    with _patched(runmode, read_pid=lambda: None):
+        text = runmode.status_text()
+    assert 'start.py' in text
+
+
+def test_status_text_shows_the_tail_of_the_log():
+    """后台在跑的时候，把日志最后几行一起打出来。
+
+    这是"跟随到底生没生效"唯一的可见出口：默认就是后台跑，
+    终端上什么都不会有。开关的开/关每次都记在日志里，
+    按了右键而这里没有"右键开关：开"，就说明那一下没被认到 ——
+    这一条能把"没按到"和"按到了但没跟随"直接分开，
+    而这两件事的修法完全不同。
+    """
+    log = '旧日志\n' + runmode.switch_message(True) + '\n'
+    with _temp_file(log) as path:
+        with _patched(runmode, read_pid=lambda: 4242,
+                      _alive=lambda pid: True, BG_LOG=path):
+            text = runmode.status_text()
+    assert '4242' in text
+    assert runmode.switch_message(True) in text
+
+
+def test_status_text_notices_a_dead_process():
+    """记着 pid 但进程已经不在了 —— 不能说"在跑"，也不能只说"没跑"。
+
+    这种情况（上次没 --stop 就关机了）最容易被误判成"程序还在后台"，
+    用户会去等一个永远不会动的程序。
+    """
+    with _patched(runmode, read_pid=lambda: 4242, _alive=lambda pid: False):
+        text = runmode.status_text()
+    assert '4242' in text
+    assert '重新启动' in text
+
+
+# ----------------------------------------------------------------------
+# 测试用的小工具
+# ----------------------------------------------------------------------
+
+class _temp_file:
+    """往临时文件里写点东西，用完删掉。"""
+
+    def __init__(self, text, binary=False):
+        self._text = text
+        self._binary = binary
+        self.path = None
+
+    def __enter__(self):
+        fd, self.path = tempfile.mkstemp(suffix='.log')
+        with os.fdopen(fd, 'wb' if self._binary else 'w',
+                       **({} if self._binary else {'encoding': 'utf-8'})) as f:
+            f.write(self._text.encode('utf-8') if self._binary else self._text)
+        return self.path
+
+    def __exit__(self, *exc):
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+        return False
+
+
+class _patched:
+    """临时换掉模块里的几个名字，出来的时候原样装回去。
+
+    比 monkeypatch 手写一遍省事，也不会因为中途抛异常而把改动留在模块上 ——
+    留着的话后跑的测试会莫名其妙地失败，查起来很费劲。
+    """
+
+    def __init__(self, module, **values):
+        self._module = module
+        self._new = values
+        self._old = {}
+
+    def __enter__(self):
+        for k, v in self._new.items():
+            self._old[k] = getattr(self._module, k)
+            setattr(self._module, k, v)
+        return self
+
+    def __exit__(self, *exc):
+        for k, v in self._old.items():
+            setattr(self._module, k, v)
+        return False
 
 
 # ----------------------------------------------------------------------

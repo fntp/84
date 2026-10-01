@@ -17,6 +17,8 @@
 
 import os
 import sys
+import threading
+import time
 
 # 本文件在 <项目根>\test\ 下，把 <项目根> 加到搜索路径才能 import main 包
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,6 +105,40 @@ def test_initial_position_is_not_counted_as_a_click():
     c = _Clock()
     gate = _gate(trigger.DOWN)          # 一上来就按着，之后一直是这个状态
     assert selfcheck.watch_toggle(gate, 0.02, clock=c.now, sleep=c.sleep) == 0
+
+
+def test_a_click_shorter_than_the_watch_interval_is_still_counted():
+    """整段点击都夹在 watch_toggle 两次 poll 之间，也必须数到。
+
+    run() 里是 gate.start() 之后再 watch_toggle，理由就在这里：
+    靠 watch_toggle 自己那个 0.02 秒的轮询去读，按下和抬起都在两次
+    轮询之间的话，整整一下点击就是看不见的 —— 用户按得动，
+    尺子说按不动，他会跑去改权限和驱动，全白费。
+
+    这条特意把轮询间隔拉到 0.25 秒（远大于那次 20 毫秒的按下），
+    让"只靠轮询"必漏，只有读键线程数得到。用的是真时钟，因为
+    要验的正是"两次 poll 之间发生了什么"这件事本身。
+    """
+    value = {'v': 0}
+    gate = trigger.RightButtonToggle(
+        vk=0x02, key_state=lambda _vk: value['v'], interval=0.001)
+
+    def click():
+        time.sleep(0.05)
+        value['v'] = trigger.DOWN
+        time.sleep(0.02)
+        value['v'] = 0
+
+    gate.start()
+    clicker = threading.Thread(target=click, daemon=True)
+    clicker.start()
+    try:
+        clicks = selfcheck.watch_toggle(gate, 0.6, interval=0.25)
+    finally:
+        clicker.join()
+        gate.close()
+
+    assert clicks == 1, f'夹在两次轮询中间的点击没被数到（数到 {clicks} 次）'
 
 
 # ----------------------------------------------------------------------

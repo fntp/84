@@ -219,7 +219,15 @@ def run(say, wait=8.0, clock=time.monotonic, sleep=time.sleep, move=True):
     say(f'\n请在接下来 {wait:.0f} 秒内【按两下鼠标右键】'
         f'（按一下开始跟随、再按一下停手，两下都按才能把两个状态都验到）。')
     gate = RightButtonToggle(TRIGGER_VK)
-    clicks = watch_toggle(gate, wait, clock=clock, sleep=sleep)
+    # 起读键线程，和真正跑起来的时候一模一样（app.py 里也是这么起的）。
+    # 这里要是用自己的 0.02 秒轮询去读，就比真跑的时候钝 ——
+    # 真跑时那 5 毫秒一次的读键没被验到，而这一项的全部意义就是
+    # 【证明按得动】，自检比实际更钝的话，它报"认不到"就等于在骗人。
+    gate.start()
+    try:
+        clicks = watch_toggle(gate, wait, clock=clock, sleep=sleep)
+    finally:
+        gate.close()
     if clicks:
         report(True, f'右键开关 VK 0x{TRIGGER_VK:02X}', f'认到 {clicks} 次点击')
     else:

@@ -82,7 +82,11 @@ def build_parser():
     p.add_argument('--stop', action='store_true',
                    help='停掉后台进程，然后退出')
     p.add_argument('--status', action='store_true',
-                   help='看看后台进程还在不在，然后退出')
+                   help='看看后台进程还在不在，顺便把日志最后几行打出来，然后退出。'
+                        '默认就是后台跑，屏幕上什么都不显示，判断"跟随生没生效"'
+                        '基本只能靠这里：按了右键而日志里没有"右键开关：开"，'
+                        '说明那一下根本没被认到，是权限问题；有了这句却还不动，'
+                        '才是跟随本身的事')
     p.add_argument('--check', action='store_true',
                    help='只做一次自检然后退出：权限、驱动、屏幕、鼠标能不能动、'
                         '右键认不认得到。不用 engine，也不开机检测')

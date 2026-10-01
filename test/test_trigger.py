@@ -12,8 +12,11 @@
     python test\\test_trigger.py
 """
 
+import argparse
 import os
 import sys
+import threading
+import time
 
 # 本文件在 <项目根>\test\ 下，把 <项目根> 加到搜索路径才能 import main 包
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,8 +108,164 @@ def test_hold_release_hold_is_two_clicks():
     assert [t.poll() for _ in range(5)] == [False, True, True, True, False]
 
 
+def test_low_bit_stuck_while_held_flips_only_once():
+    """按着不放期间，低位一直亮着（0x8001 每轮都这样）：也只能翻一次。
+
+    这是真机上"按了没反应 / 按了又自己关掉"的元凶。低位是
+    "上次问过之后按过"，它在不同外设和驱动下表现不一致 ——
+    有的机器上按住期间会一直亮。原来那句
+    `clicked = bool(state & PRESSED) or (down and not self._down)`
+    在按着的分支里也去看低位，于是每轮翻一次：按一下 0.1 秒，
+    按 20Hz 空转就是一个偶数，开开关关正好抵消，最后停在"关"，
+    用户看到的就是"我按了，它没反应"。
+
+    判据必须是"上一轮我们以为它没按着"，跟低位无关。
+    """
+    held = trigger.DOWN | trigger.PRESSED
+    t = _toggle(0, held, held, held, held, held)
+    assert t.poll() is False
+    assert [t.poll() for _ in range(4)] == [True] * 4
+
+
+def test_stuck_low_bit_then_release_then_press_still_counts():
+    """低位常亮那种机器上，松开、再按一下，还是要翻。
+
+    修的时候最容易修过头：把低位整个不看，快点击就全漏了；
+    或者在按下沿那里忘了复位 _down，第二次按就再也认不出来。
+    """
+    held = trigger.DOWN | trigger.PRESSED
+    t = _toggle(0, held, held, 0, held, held)
+    assert [t.poll() for _ in range(6)] == [False, True, True, True, False, False]
+
+
 # ----------------------------------------------------------------------
-# 三、本机上（非 Windows）不能炸
+# 三、读键线程：点击不该跟着主循环的帧率走
+# ----------------------------------------------------------------------
+
+def _threaded(value, interval=0.001):
+    """造一个带可变状态的开关，专门给线程那几条测试用。"""
+    t = trigger.RightButtonToggle(
+        vk=0x02, key_state=lambda _vk: value['v'], interval=interval)
+    return t
+
+
+def test_a_click_is_seen_even_if_nobody_polls():
+    """起了线程之后，主循环一次都不问，开关也能自己翻过来。
+
+    这是加线程的全部理由：主循环一帧要抓屏 + 推理，几百毫秒，
+    而一次点击只有几十毫秒，靠主循环去问根本问不到；能不能问到
+    还取决于低位有没有被游戏那边先读走，所以时灵时不灵。
+    """
+    value = {'v': 0}
+    t = _threaded(value)
+    t.start()
+    try:
+        time.sleep(0.05)
+        assert t.on is False            # 什么都没按
+
+        value['v'] = trigger.DOWN       # 按下
+        time.sleep(0.05)
+        assert t.on is True
+
+        value['v'] = 0                  # 抬起 —— 只是抬手，不是点击
+        time.sleep(0.05)
+        assert t.on is True
+
+        value['v'] = trigger.DOWN       # 再按一下
+        time.sleep(0.05)
+        assert t.on is False
+    finally:
+        t.close()
+
+
+def test_poll_only_reads_the_result_while_the_thread_runs():
+    """线程在跑的时候 poll() 不许再读一次键。
+
+    两边都读的话，同一次按下会被翻两下、正好抵消 ——
+    现象还是"按了没反应"，而且比原来更难查。
+    """
+    reads = []
+
+    def read(_vk):
+        reads.append(1)
+        return trigger.DOWN
+
+    t = trigger.RightButtonToggle(0x02, key_state=read)
+    t._thread = object()            # 假装线程已经起了，不真起一个
+    t.on = True
+
+    assert [t.poll() for _ in range(3)] == [True, True, True]
+    assert reads == [], '线程在跑的时候 poll() 又去读键了'
+
+
+def test_close_stops_the_thread_and_without_start_is_a_noop():
+    """close() 要真的把线程停掉；没起过线程时调它也不能炸。
+
+    没起过就炸的话，报错会出现在退出的 finally 里 ——
+    那时候用户看到的是一次莫名其妙的崩溃，而不是"程序正常结束"。
+    """
+    value = {'v': trigger.DOWN}
+    t = _threaded(value)
+    t.close()                       # 没起过，空操作
+    assert t._thread is None
+
+    t.start()
+    t.close()
+    assert t._thread is None
+
+    was = t.on
+    value['v'] = 0
+    time.sleep(0.02)
+    assert t.on is was, '线程停了还在翻开关'
+
+
+def test_gated_frames_start_flowing_after_a_click_and_stop_after_the_next():
+    """接上真正的主循环：点一下帧号开始发，再点一下就不发了。
+
+    前面测的都是开关自己，这条测的是【开关和主循环接在一起】是不是真的通。
+    用户报的就是这个层面的事 —— "按了没反应"，而不是"poll() 返回值不对"。
+    中间任何一环（谁去读键、读了算不算数、主循环问的是不是同一个对象）
+    接错了，在这条上都会露出来。
+    """
+    from main import runmode
+
+    value = {'v': 0}
+    gate = trigger.RightButtonToggle(
+        vk=0x02, key_state=lambda _vk: value['v'], interval=0.001)
+    a = argparse.Namespace(loop=0)
+    said = []
+
+    gate.start()
+    try:
+        frames = runmode.gated_frames(a, gate, said.append, idle_interval=0.001)
+        value['v'] = trigger.DOWN          # 第一下：开
+        time.sleep(0.05)
+        assert [next(frames) for _ in range(3)] == [1, 2, 3]
+
+        value['v'] = 0
+        time.sleep(0.02)
+        value['v'] = trigger.DOWN          # 第二下：关
+        value['v'] |= trigger.PRESSED      # 真机上低位常常还亮着，一起带上
+        time.sleep(0.05)
+        value['v'] = 0
+        time.sleep(0.05)
+
+        # 关掉之后一个帧号都不该再出来。用超时保护：真漏了的话
+        # next() 会一直阻塞，测试挂死比失败更难查。
+        box = {}
+        t = threading.Thread(
+            target=lambda: box.update(v=next(frames)), daemon=True)
+        t.start()
+        t.join(timeout=0.3)
+        assert t.is_alive(), f'关了开关还在发帧号，发出了 {box.get("v")}'
+    finally:
+        gate.close()
+
+    assert said == [runmode.switch_message(True), runmode.switch_message(False)]
+
+
+# ----------------------------------------------------------------------
+# 四、本机上（非 Windows）不能炸
 # ----------------------------------------------------------------------
 
 def test_non_windows_read_returns_zero():

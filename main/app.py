@@ -97,6 +97,8 @@ def main(argv=None):
                                gate, follower)
     finally:
         # 不管中间出什么错，都必须释放资源
+        if gate is not None:
+            gate.close()
         if mover:
             mover.close()
         if log:
@@ -202,8 +204,14 @@ def _build_follow(a, say):
     if size is None:
         # 非 Windows。检测和坐标输出照常，只是没法跟随。
         # 开关仍然生效 —— 用户要的就是"关着的时候什么都别干"。
+        # 这里【不起读键线程】：没有跟随，读到的点击也没人用。
         say('拿不到屏幕尺寸（只有 Windows 能跟随），这次只做检测和坐标输出。')
         return gate, None, None
+
+    # 开关的读键放到自己的线程里，别跟着主循环的节奏走。见 trigger.start()。
+    # 必须在返回之前起 —— 主循环一进 gated_frames 就开始问状态了。
+    if gate is not None:
+        gate.start()
 
     mover = _LazyMover()
     follower = Follower(

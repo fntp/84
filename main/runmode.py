@@ -23,7 +23,12 @@ r"""前台 / 后台怎么跑，这个文件说了算。
 后台进程怎么停？
     python start.py --stop
     （本质是 taskkill /PID <pid> /F，pid 记在 out\bg.pid）
-    python start.py --status  看它还在不在
+    python start.py --status  看它还在不在，同时把日志最后几行打出来
+
+    为什么 --status 要带日志尾巴：默认这条路是后台，终端上一个字都没有，
+    用户唯一能判断"生没生效"的地方就是那个日志文件。开关的每一次开/关
+    都记在里面 —— 按了右键却没有"右键开关：开"，一眼就能看出是那一下
+    根本没被认到（多半是权限比游戏低），而不是跟随坏了。
 """
 
 import itertools
@@ -310,17 +315,49 @@ def stop_running():
             '可以手动执行：taskkill /PID %d /F' % (r.returncode, pid))
 
 
+def tail(path, lines=6, window=4096):
+    """读一个文本文件的最后几行，读不到就返回空表。
+
+    为什么要专门写一个，不直接 readlines()：bg.log 是【追加写】的，
+    跨很多次运行一直往里加，可能已经有几百兆。整个读进内存会把 --status
+    这个本该一眨眼就返回的命令拖住。所以只从末尾读一小段。
+    从中间截断可能把某个汉字切成两半，解码时按替换字符处理，日志无所谓。
+    """
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - window))
+            data = f.read()
+    except OSError:
+        return []
+    rows = [x.rstrip() for x in data.decode('utf-8', 'replace').splitlines()]
+    return [x for x in rows if x.strip()][-lines:]
+
+
 def status_text():
-    """看一眼后台在不在跑，返回一句给人看的话。"""
+    """看一眼后台在不在跑，返回一句给人看的话。
+
+    末尾要带上日志的最后几行：默认跑法就是后台，终端上一句话都没有，
+    用户判断"到底生没生效"只能看这个。开关的每一次开/关都记在里面，
+    按了右键但这里没有"右键开关：开"，就说明那一下根本没被认到 ——
+    这一条能直接分掉"没按到"和"按到了但没跟随"两种完全不同的毛病。
+    """
     pid = read_pid()
     if not pid:
         return '后台没有在跑。要启动就直接运行 start.py'
 
     if _alive(pid):
-        return ('后台在跑，进程号 %d。\n'
+        text = ('后台在跑，进程号 %d。\n'
                 '坐标文件：%s\n'
                 '输出日志：%s\n'
                 '停掉：start.py --stop' % (pid, BG_COORDS, BG_LOG))
+        recent = tail(BG_LOG)
+        if recent:
+            text += ('\n\n日志最后 %d 行（右键开关的开/关、跟随报的错都在这里）：\n'
+                     % len(recent))
+            text += '\n'.join('  ' + row for row in recent)
+        return text
 
     return ('后台没在跑（记录里是进程号 %d，但那个进程已经不在了）。\n'
             '重新启动：start.py' % pid)
