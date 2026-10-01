@@ -30,8 +30,9 @@ import itertools
 import os
 import subprocess
 import sys
+import time
 
-from .config import BG_COORDS, BG_LOG, BG_PID, OUT_DIR, ROOT
+from .config import BG_COORDS, BG_LOG, BG_PID, IDLE_INTERVAL, OUT_DIR, ROOT
 
 # 入口脚本的绝对路径。后台子进程必须用绝对路径，
 # 因为它的工作目录是我们指定的，不是用户敲命令的地方。
@@ -54,6 +55,53 @@ def frame_numbers(loop):
     if loop <= 0:
         return itertools.count(1)
     return iter(range(1, loop + 1))
+
+
+# ----------------------------------------------------------------------
+# 开关：关着的时候一个帧号都不发
+# ----------------------------------------------------------------------
+
+def switch_message(on):
+    """开关状态变了要说的话。开和关分开写，是为了日志里一眼能看出时间点。"""
+    return '右键开关：开，开始跟随' if on else '右键开关：关，已停手'
+
+
+def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL):
+    """带开关的帧号生成器：开关关着的时候，一个帧号都不发。
+
+    为什么做成生成器，而不是在主循环里 if 一下跳过这一帧：
+        关着的时候不是"这一帧不动鼠标"那么轻，而是【整帧都不存在】——
+        不抓屏、不推理、不算坐标、不写文件。而且帧号绝对不能照常往下走：
+        开着 --loop 100 的话，关着那段时间会把额度白白烧掉，跑一半就退出了；
+        定期清理的计数节奏也会跟着乱。生成器把"这一帧算不算数"和
+        "主循环干不干活"合成同一件事，主循环那边一行都不用改。
+
+    gate 为 None（--always）时直接转交 frame_numbers，行为跟没有开关时一样。
+    """
+    counter = iter(frame_numbers(a.loop))
+    if gate is None:
+        yield from counter
+        return
+
+    prev = None
+    while True:
+        on = gate.poll()
+        if on != prev:
+            say(switch_message(on))
+            prev = on
+        if not on:
+            # 关着的时候空转。这里必须 sleep，两个理由：
+            # 一是不然会占满一个核；二是 GetAsyncKeyState 的低位是
+            # "上次问过之后按过"，问得越密越容易漏掉两次点击之间的那一下。
+            time.sleep(idle_interval)
+            continue
+        try:
+            i = next(counter)
+        except StopIteration:
+            # 帧数跑满了。异常必须在这里接住 —— 让它从生成器里逃出去的话，
+            # Python 会把它变成 RuntimeError（PEP 479），主循环就炸了。
+            return
+        yield i
 
 
 # ----------------------------------------------------------------------

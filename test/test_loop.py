@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""运行方式测试（不需要显卡、不需要真实抓屏）：帧号生成 + 前台后台判断。
+"""运行方式测试（不需要显卡、不需要真实抓屏）：帧号生成 + 开关 + 前台后台判断。
 
-只管两件事，都是纯计算：
+只管三件事，都是纯计算：
 
     1. frame_numbers()  -- 默认一直数下去（一直监听），指定帧数就数到那儿停
-    2. is_foreground()  -- 这次该在终端里跑，还是丢到后台去
+    2. gated_frames()   -- 开关关着的时候一个帧号都不发（右键开关就接在这儿）
+    3. is_foreground()  -- 这次该在终端里跑，还是丢到后台去
 
-这两条决定了"敲一句 start.py 到底会发生什么"，改错了很难发现
-（比如又会变成只跑一帧就退），所以单独钉一下。
+这几条决定了"敲一句 start.py 到底会发生什么"，改错了很难发现
+（比如又会变成只跑一帧就退，或者开关关着还在偷偷烧帧数），所以单独钉一下。
 
 运行方式（在项目根目录下，不需要 pytest）：
 
@@ -68,7 +69,80 @@ def test_loop_n_gives_one_to_n():
 
 
 # ----------------------------------------------------------------------
-# 二、前台 / 后台
+# 二、开关：关着的时候一个帧号都不发
+# ----------------------------------------------------------------------
+
+class _Gate:
+    """假装是右键开关：按顺序吐出这些状态，吐到最后一个就一直吐它。"""
+
+    def __init__(self, *states):
+        self._states = list(states)
+        self.polls = 0
+
+    def poll(self):
+        self.polls += 1
+        if len(self._states) > 1:
+            return self._states.pop(0)
+        return self._states[0]
+
+
+def _drive(a, gate, said):
+    """跑一遍开关门控。idle_interval=0 是为了让测试不真的睡 ——
+    真的空转那 0.05 秒在程序里有用，在测试里纯属浪费时间。"""
+    return list(runmode.gated_frames(a, gate, said.append, idle_interval=0))
+
+
+def test_no_gate_means_plain_frame_numbers():
+    """--always（gate 为 None）：行为跟没有开关时一模一样，也不报开关状态。"""
+    said = []
+    assert _drive(_args(loop=3), None, said) == [1, 2, 3]
+    assert said == []
+
+
+def test_gate_off_sends_nothing_until_it_opens():
+    """关着的时候一帧都不出：帧号停在 1，等开关打开才从 1 开始数。"""
+    said = []
+    gate = _Gate(False, False, False, True)
+    assert _drive(_args(loop=1), gate, said) == [1]
+    # 空转 3 次 + 开门那次 + 发现"帧数跑满了"的那一次。三次空转一帧都没往下发。
+    assert gate.polls == 5
+    assert said == [runmode.switch_message(False), runmode.switch_message(True)]
+
+
+def test_gate_off_does_not_burn_the_frame_budget():
+    """关着的那段时间【不占帧数】。
+
+    这是最容易写错的地方：要是主循环里简单地 continue 一下、帧号照常往下走，
+    --loop 100 会在用户还没按右键的时候就把额度烧光然后退出，
+    看起来就是"程序自己关了"，用户根本不知道发生了什么。
+    """
+    said = []
+    gate = _Gate(False, False, True, True)
+    assert _drive(_args(loop=2), gate, said) == [1, 2]
+
+
+def test_gate_reports_state_only_when_it_changes():
+    """开着的时候每帧都 poll，但只在状态真的变了的时候说一句。
+
+    否则每秒十行"右键开关：开"，日志全被这句话淹了。
+    """
+    said = []
+    assert _drive(_args(loop=5), _Gate(True), said) == [1, 2, 3, 4, 5]
+    assert said == [runmode.switch_message(True)]
+
+
+def test_finishing_the_loop_is_a_clean_stop():
+    """帧数跑满时生成器要干净地结束，不能抛 RuntimeError。
+
+    PEP 479：生成器里逃出去的 StopIteration 会被 Python 变成 RuntimeError，
+    那样主循环就炸在收尾上了。这条是那个坑的回归测试。
+    """
+    assert _drive(_args(loop=3), _Gate(True), []) == [1, 2, 3]
+    assert _drive(_args(loop=1), _Gate(False, True), []) == [1]
+
+
+# ----------------------------------------------------------------------
+# 三、前台 / 后台
 # ----------------------------------------------------------------------
 
 def test_default_runs_in_background():

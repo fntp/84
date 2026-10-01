@@ -12,12 +12,15 @@
 import argparse
 
 from .config import (
+    AIM_DEADZONE,
+    AIM_GAIN,
     CLEANUP_EVERY,
     DEFAULT_CONF,
     DEFAULT_ENGINE,
     DEFAULT_INTERVAL,
     DEFAULT_IOU,
     DEFAULT_LOOP,
+    FOLLOW_MIN_CONFIDENCE,
     KEEP_LINES,
 )
 from .component.screen import parse_region
@@ -28,7 +31,7 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog='start.py',
         description='抓当前屏幕 -> 跑 YOLO 检测 -> 输出 person 的中心像素坐标。'
-                    '只读屏幕，不做任何鼠标/键盘操作。',
+                    '开关打开（默认鼠标右键）时，同时把鼠标朝目标方向推一点点。',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -47,9 +50,24 @@ def build_parser():
                         '不填就是整屏。输出的坐标仍然是整屏坐标')
     p.add_argument('--loop', type=int, default=DEFAULT_LOOP,
                    help='抓几帧。默认 0 = 一直监听，直到 Ctrl+C 或 --stop；'
-                        '填 N 就抓 N 帧然后自动退出')
+                        '填 N 就抓 N 帧然后自动退出。注意只统计开关打开时的帧，'
+                        '不按右键它就一直等着')
     p.add_argument('--interval', type=float, default=DEFAULT_INTERVAL,
                    help='多帧之间的间隔，单位秒。默认 0.1 秒，约每秒 10 次')
+
+    # ---- 跟随瞄准 ----
+    p.add_argument('--always', action='store_true',
+                   help='不要右键开关，一直跟随。调试用；也用于按键读不到的场合 '
+                        '（比如程序权限比游戏低，GetAsyncKeyState 收不到输入）')
+    p.add_argument('--follow-conf', type=float, default=FOLLOW_MIN_CONFIDENCE,
+                   help='跟随的最低置信度。比 --conf 高得多，宁可漏瞄也别瞄错人；'
+                        '填 0 表示不设门槛')
+    p.add_argument('--gain', type=float, default=AIM_GAIN,
+                   help='跟随增益：屏幕像素差 -> 鼠标计数。调大追得猛、容易过冲，'
+                        '调小追得平滑。只影响手感，每帧都在重新算，都能对准')
+    p.add_argument('--deadzone', type=int, default=AIM_DEADZONE,
+                   help='死区半径（像素）。目标离准星这么近就不动鼠标了，'
+                        '免得准星跟着检测框一起抖')
 
     # ---- 运行方式（前台 / 后台）----
     p.add_argument('--fg', action='store_true',
@@ -101,5 +119,11 @@ def parse_args(argv=None):
         build_parser().error('--loop 不能是负数')
     if a.interval < 0:
         build_parser().error('--interval 不能是负数')
+    if a.follow_conf < 0:
+        build_parser().error('--follow-conf 不能是负数')
+    if a.gain < 0:
+        build_parser().error('--gain 不能是负数')
+    if a.deadzone < 0:
+        build_parser().error('--deadzone 不能是负数')
 
     return a

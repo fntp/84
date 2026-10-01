@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""项目入口。启动就一件事：抓屏幕 -> 检测 -> 输出坐标。
+"""项目入口。启动就一件事：抓屏幕 -> 检测 -> 输出坐标（开关打开时跟随鼠标）。
 
 用法（在项目根目录下）：
 
@@ -7,9 +7,10 @@
     set PYTHONUTF8=1
     C:\\Users\\fntp\\.workbuddy-ai\\binaries\\python\\envs\\default\\Scripts\\python.exe start.py
 
-只读屏幕，不做任何鼠标/键盘操作，不调用任何第三方 DLL。
+起来之后鼠标右键按一下开始跟随，再按一下停手。不按就一直什么都不做 ——
+不抓屏、不检测、不动鼠标。不想用这个开关，加 --always 就是一直跟随。
 
-参数说明用 --help 看，或者直接翻 下一步.txt。
+参数说明用 --help 看。
 """
 
 import os

@@ -37,6 +37,25 @@ def dpi_aware():
             pass
 
 
+def screen_size():
+    """主屏幕尺寸，返回 (宽, 高)；拿不到（非 Windows）返回 None。
+
+    跟随瞄准要知道准星在哪 —— 锁定视角的游戏会把鼠标夹在屏幕正中心，
+    所以屏幕中心就是准星的屏幕绝对坐标。
+
+    这里不用 grab() 的返回值来量：--region 时抓到的只是那一块，
+    而且多抓一屏纯属浪费。GetSystemMetrics 是问系统要的，和抓图口径无关。
+
+    非 Windows 返回 None，调用方自己决定怎么办（Linux 上跑测试用得到）。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        # 0 = SM_CXSCREEN，1 = SM_CYSCREEN，主显示器
+        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    except Exception:
+        return None
+
+
 def parse_region(text):
     """解析 --region 参数，格式 "x1,y1,x2,y2"。
 
