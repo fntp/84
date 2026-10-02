@@ -87,6 +87,41 @@ Get-Content $p | Select-String 'head_y_offset'
 
 
 --------------------------------------------------------------
+ 第三步：人多的时候老在几个人之间换目标（缩小识别圈）
+--------------------------------------------------------------
+
+面板上改最方便（能边打边调）：左侧 **Vision** 分组 → **Capture** 页 →
+`Circle FOV size` 滑块，默认 100%，往小拖到 30% 左右
+（只认准星周围一小圈里的目标，旁边的人就进不来了）。
+
+不想开面板就直接改 config.ini（改完按 F4）：
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak6" -Force
+$t = [IO.File]::ReadAllText($p)
+$set = @{'circle_fov_enabled'='true';'circle_fov_radius_percent'='30'}
+foreach($k in @($set.Keys)){
+  $line = "$k = $($set[$k])"
+  $re = '(?m)^\s*' + [regex]::Escape($k) + '\s*=.*$'
+  if($t -match $re){ $t = $t -replace $re, $line }
+  else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+}
+[IO.File]::WriteAllText($p, $t)
+Get-Content $p | Select-String 'circle_fov'
+===== 复制到这里结束 =====
+
+打印出 circle_fov_radius_percent = 30 就成了（备份 config.ini.bak6）。
+还换人就往下改小，开始丢目标就改大。
+
+还原：
+
+Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak6 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+还原完按 F4。为什么这么改、还有什么要注意的，看 SUNONE-STEPS.txt 的"附三"。
+
+
+--------------------------------------------------------------
  要还原的话
 --------------------------------------------------------------
 

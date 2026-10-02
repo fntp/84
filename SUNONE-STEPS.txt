@@ -166,6 +166,7 @@ cd F:\aifz\ai_5.0.3_CUDA
      4. 鼠标 DPI 多少？
      5. Mouse → Input Method 里选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
      6. 第 6 步那条命令打印出来的 [Games] 那几行。
+     7. 人多的时候会不会在几个人之间来回换目标？（见"附三"）
 
    第 3、4 项是关键：有了游戏名 + 灵敏度 + DPI，我能直接算出 [Games] 该填多少。
 
@@ -212,4 +213,90 @@ Copy-Item .\config.ini.bak .\config.ini -Force
 
    看现在这几个值是多少：
 
-$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|prediction|kalman|active_game|^\[Games\]|^\S+\s*=\s*\d+\.?\d*,\d'
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|prediction|kalman|circle_fov|tracker_enabled|active_game|^\[Games\]|^\S+\s*=\s*\d+\.?\d*,\d'
+
+
+---- 附三：好几个人同框时，老是换目标 -------------------------------
+
+   能不能固定打一个？能。要做的不是找什么"锁定"开关，而是
+   **不让别人进识别范围**。
+
+   先说清楚它本来是怎么工作的：
+   这个工具一直有锁定（Tracker），config.ini 里 tracker_enabled 默认就是
+   true，而且**按住右键（瞄准键）期间锁是保持的** —— 只要锁定的人还在被
+   识别到，它就不会换人。
+
+   换人只有一个触发点，而且是写死的：
+   锁定的人连续约 15 帧（60fps 下约 0.25 秒）完全没被识别到 → 锁被丢掉 →
+   立刻改选"离准星最近的那个人"。
+   所以被打的人只要被掩体挡住、跑出识别范围、或者模型漏检超过 0.25 秒，
+   就会跳到旁边那个人身上。这个帧数写在源码里（maxMissedFrames = 6，
+   锁定目标再加 8），config.ini 改不了，只能绕。
+
+   ------------------------------------------------
+    办法：把识别范围缩小（推荐，能边打边调）
+   ------------------------------------------------
+
+   悬浮窗 → 左侧 **Vision** 分组 → **Capture** 页，往下看：
+
+     Circle FOV          勾选框，默认已开
+     Circle FOV size     滑块，默认 100%   ← 拖小它
+
+   含义：只认"以准星为圆心、这个百分比为半径"的圈里的目标，检测框的
+   中心落在圈外的人，直接不算数。圈越小，旁边的人越进不来。
+
+     100%  = 现在这样，整个识别范围都算
+     70% / 50% / 30%  一档一档往小拖，边打边看
+     ~30%  基本只有准星正指着的那个人会被识别到
+
+   别拖过头：拖太小会把正在打的人也筛掉（框中心也得在圈里），表现是
+   "打着打着目标突然丢一下"。出现丢目标就说明拖太小了，往回加一档。
+
+   （识别范围本身就是以准星为中心的一个正方形，边长由 Capture 页的
+     Detection Resolution 决定，默认 320 像素；Circle FOV 是在这个正方形
+     里面再收一次圈。所以 30% 大约是准星周围 96×96 像素的范围。）
+
+   想看见这个圈：Visuals 分组 → **Game Render** 页把 `Enable` 勾上，
+   再到 **Render Style** 页，Capture Frame 那一块里把 `Draw Circle Guide`
+   勾上，游戏里就会画出这个圈，对着圈调最方便。
+
+   ------------------------------------------------
+    两个配套注意点
+   ------------------------------------------------
+
+   · **要一直按住右键。** 松开右键时每一帧都重新挑"离准星最近的"，
+     松手再按就会换人。不想一直按 → Aim 分组 → **Target** 页，
+     把 `Auto Aim` 勾上（等于一直按着）。
+   · **别**去 Aim → **Tracker** 页把 `Enable Tracker` 关掉。关掉就完全
+     不锁定了，每一帧都重挑最近的人，换得比现在更勤。
+
+   ------------------------------------------------
+    不开悬浮窗就直接改（改完按 F4）
+   ------------------------------------------------
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak6" -Force
+$t = [IO.File]::ReadAllText($p)
+$set = @{'circle_fov_enabled'='true';'circle_fov_radius_percent'='30'}
+foreach($k in @($set.Keys)){
+  $line = "$k = $($set[$k])"
+  $re = '(?m)^\s*' + [regex]::Escape($k) + '\s*=.*$'
+  if($t -match $re){ $t = $t -replace $re, $line }
+  else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+}
+[IO.File]::WriteAllText($p, $t)
+Get-Content $p | Select-String 'circle_fov'
+===== 复制到这里结束 =====
+
+   跑完打印这两行就成了：
+
+     circle_fov_enabled = true
+     circle_fov_radius_percent = 30
+
+   备份在 config.ini.bak6。还嫌换人就把 30 改小，丢失目标就改大。
+   要还原：
+
+     Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak6 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+   还原完按 F4。
