@@ -1,0 +1,83 @@
+========================================
+ 让悬浮窗能打开（键盘上没有 Home 键）
+========================================
+
+下面每一段代码都有"从这里开始复制 / 复制到这里结束"的标记，
+一次只复制中间那一段，整块贴进 PowerShell 回车。
+
+
+--------------------------------------------------------------
+ 第一步：把悬浮窗热键从 Home 改成 F8
+--------------------------------------------------------------
+
+悬浮窗（改参数的图形窗口）默认是关着的，要按热键才出来，
+热键出厂值是 Home。键盘上没有 Home 键就永远按不出来，所以先改成 F8
+（F1-F12 哪个键盘都有；F2 / F3 / F4 已经被"退出 / 暂停 / 重载"占了）。
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak4" -Force
+$t = [IO.File]::ReadAllText($p)
+$re = '(?m)^\s*button_open_overlay\s*=.*$'
+$line = 'button_open_overlay = F8'
+if($t -match $re){ $t = $t -replace $re, $line }
+else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+[IO.File]::WriteAllText($p, $t)
+Get-Content $p | Select-String 'button_open_overlay'
+===== 复制到这里结束 =====
+
+跑完会打印一行：
+
+  button_open_overlay = F8
+
+看到它就成了（原文件备份成 config.ini.bak4）。
+
+接着做：
+
+  1. 回 ai.exe 那个黑窗口，按一下 F4（重载配置）。不放心就关掉重开。
+  2. 按 F8 —— 悬浮窗出来。是个左上角的小窗口，出来时在最前面，
+     可以拖到一边，不用关它。
+  3. 悬浮窗里找 Offsets 那一栏，把 Approximate Head Y Offset
+     从 0.05 往大拖（0.10 → 0.15），边拖边看准星，落到头正中就松手。
+     拖动当场生效，不用按 F4，松手就自动存回 config.ini。
+     数值越大 = 瞄准点越往下。
+
+
+--------------------------------------------------------------
+ 第二步（不想开悬浮窗才用）：直接改瞄准点高度
+--------------------------------------------------------------
+
+不开悬浮窗也能改，代价是不能边瞄边看效果。
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak5" -Force
+$t = [IO.File]::ReadAllText($p)
+$re = '(?m)^\s*head_y_offset\s*=.*$'
+$line = 'head_y_offset = 0.10'
+if($t -match $re){ $t = $t -replace $re, $line }
+else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+[IO.File]::WriteAllText($p, $t)
+Get-Content $p | Select-String 'head_y_offset'
+===== 复制到这里结束 =====
+
+打印出 head_y_offset = 0.10 就成了，然后按 F4。还偏上就再改成 0.15，
+改过头偏下了就改回 0.05。数值越大，瞄准点越往下。
+
+（0.05 是"头的检测框顶部往下 5%"，基本就是头顶，所以默认会偏上一丁点。
+ 打身子用的是另一个值 body_y_offset，默认 0.15，一般不用动。）
+
+
+--------------------------------------------------------------
+ 要还原的话
+--------------------------------------------------------------
+
+热键还原：
+
+Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak4 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+瞄准点还原：
+
+Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak5 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+还原完按 F4。
