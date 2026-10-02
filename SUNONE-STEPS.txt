@@ -95,7 +95,7 @@ cd F:\aifz\ai_5.0.3_CUDA
 
    这是"瞄准点落在目标哪个位置"的问题，跟倍率、外推都没关系。
    悬浮窗（热键默认是 Home；键盘上没 Home 键的先照"附一"改成 F8）
-   → Offsets 那一栏有两个滑块：
+   → 左侧菜单 **Aim** 分组里点 **Target** 页，往下有两个滑块：
 
      Approximate Head Y Offset    默认 0.05    ← 打头用这个
      Approximate Body Y Offset    默认 0.15    ← 打身子用这个

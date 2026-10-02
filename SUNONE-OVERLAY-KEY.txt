@@ -37,10 +37,28 @@ Get-Content $p | Select-String 'button_open_overlay'
   1. 回 ai.exe 那个黑窗口，按一下 F4（重载配置）。不放心就关掉重开。
   2. 按 F8 —— 悬浮窗出来。是个左上角的小窗口，出来时在最前面，
      可以拖到一边，不用关它。
-  3. 悬浮窗里找 Offsets 那一栏，把 Approximate Head Y Offset
-     从 0.05 往大拖（0.10 → 0.15），边拖边看准星，落到头正中就松手。
-     拖动当场生效，不用按 F4，松手就自动存回 config.ini。
-     数值越大 = 瞄准点越往下。
+  3. 悬浮窗左侧竖排菜单里，找到 **Aim** 分组，点里面的 **Target** 页。
+
+     进去从上往下看，是这些东西：
+
+        两个勾选框   Disable Headshot / Auto Aim
+        两行黄字     Arrow keys: Adjust body offset
+                     Shift+Arrow keys: Adjust head offset
+        两行滑块     Approximate Body Y Offset     0.15   ← 打身子用
+                     Approximate Head Y Offset     0.05   ← 打头改这个
+        一张人体图   红线上写 Body、绿线上写 Head，画的就是这两个值
+                     现在把瞄准点放在人体哪个高度
+
+     （"Offsets" 只是代码里的分组名，界面上不显示这几个字，
+       认滑块名字 Approximate Head Y Offset 就行。）
+
+     把 Approximate Head Y Offset 的滑块往右拖，数值变大：0.05 → 0.10 → 0.15，
+     边拖边看准星，落到头正中就松手。数值越大 = 瞄准点越往下。
+
+     0.05 到 0.10 距离很小不好拖，可以按住 Ctrl 再用左键点一下那个滑块，
+     会弹出一个直接输数字的框，打 0.10 回车。
+
+     拖动当场生效，不用按 F4；松手就自动存回 config.ini。
 
 
 --------------------------------------------------------------
