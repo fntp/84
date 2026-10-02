@@ -2,10 +2,13 @@
 """右键开关测试（不需要 Windows、不需要游戏、不需要 buke_km）。
 
 为什么这个必须测：
-    开关漏掉一次点击，用户按了没反应，会以为程序坏了；
-    开关多翻一次，程序会在用户不想让它动的时候抢鼠标 —— 这正是要修的问题。
-    而"点一下"经常整段都夹在两帧之间（按下和抬起都在 0.1 秒内完成），
-    所以最容易错的就是"快点击"和"长按"这两种极端，都钉在这里。
+    开关判错，用户看到的是"我开镜了它不动"（漏了）或者"我没按它自己动"
+    （多了），然后会以为是跟随坏了、驱动坏了、模型坏了，四处乱调。
+    它又是全流程唯一的入口，所以这里钉的是【语义】：按着就是开，松开就是关。
+
+    最容易错的不是"能不能读到键"，而是把它做成"按一下翻一次"那种开关 ——
+    在按住开镜的游戏里，跟随状态会跟着按键次数的奇偶走，表现成
+    "关镜的时候跟着、开镜的时候不动"。第一节最后一条就是这个的回归测试。
 
 运行方式（在项目根目录下，不需要 pytest）：
 
@@ -25,6 +28,11 @@ if ROOT not in sys.path:
 
 from main.component import trigger                                       # noqa: E402
 
+# 低位。GetAsyncKeyState 的"上次问过之后按过"，读一次清一次，
+# 还会被游戏自己读走 —— 所以 trigger 里【故意不用它】。
+# 这里留个名字，是为了明确地测"只靠它不能把开关打开"。
+PRESSED = 0x0001
+
 
 def _keys(*states):
     """造一个假的读键函数：按顺序吐出这些状态，吐到最后一个就一直吐它。
@@ -42,103 +50,55 @@ def _keys(*states):
     return read
 
 
-def _toggle(*states):
-    return trigger.RightButtonToggle(vk=0x02, key_state=_keys(*states))
+def _hold(*states):
+    return trigger.RightButtonHold(vk=0x02, key_state=_keys(*states))
 
 
 # ----------------------------------------------------------------------
-# 一、基本语义：按一下开，再按一下关
+# 一、语义：按着就是开，松开就是关
 # ----------------------------------------------------------------------
 
 def test_starts_off_and_stays_off_when_never_pressed():
     """没按过就一直关着 —— 这是默认状态，也是"程序起来别乱动"的保证。"""
-    t = _toggle(0)
+    t = _hold(0)
     assert [t.poll() for _ in range(5)] == [False] * 5
+    assert t.presses == 0
 
 
-def test_first_click_turns_on_second_turns_off():
-    """用户要的就是这个：第一次右键识别，第二次不识别。
+def test_level_follows_the_button_instead_of_counting_clicks():
+    """按着开、松开停、再按着又开 —— 这是用户要的，也是修掉的那个 bug。
 
-    注意状态序列：中间那个 0 是"松开了"。抬手之后低位被读走就清零了，
-    所以紧接着的下一次点击还能被认出来。
+    做成"按一次翻一次"的话，第二次按住正好把开关翻回去：
+    用户看到的就是"我关镜的时候它跟着、我开镜的时候它不动"。
     """
-    t = _toggle(0, trigger.PRESSED, 0, trigger.PRESSED)
-    assert t.poll() is False      # 一开始没按
-    assert t.poll() is True       # 第一次点击 -> 开
-    assert t.poll() is True       # 松手之后保持开着
-    assert t.poll() is False      # 第二次点击 -> 关
+    t = _hold(0, trigger.DOWN, trigger.DOWN, 0, 0, trigger.DOWN)
+    assert [t.poll() for _ in range(6)] == [False, True, True, False, False, True]
 
 
-def test_quick_click_between_polls_is_not_missed():
-    """按下和抬起都夹在两帧之间（低位只剩 0x0001，高位已经是 0）。
-
-    只看"此刻按着没有"的实现会整段漏掉，这就是为什么两个位都要看。
-    """
-    t = _toggle(0, trigger.PRESSED, 0)
-    assert t.poll() is False
-    assert t.poll() is True
-
-
-# ----------------------------------------------------------------------
-# 二、别重复翻：一次按下只算一次
-# ----------------------------------------------------------------------
-
-def test_holding_button_flips_only_once():
-    """一直按着不放，只翻一次 —— 不能每帧都翻，那样会狂闪。"""
-    t = _toggle(0, trigger.DOWN, trigger.DOWN, trigger.DOWN, trigger.DOWN)
+def test_holding_it_longer_does_not_change_anything():
+    """一直按着不放：一路都是 True，不会按时间或按轮数自己变。"""
+    t = _hold(0, trigger.DOWN, trigger.DOWN, trigger.DOWN, trigger.DOWN)
     assert t.poll() is False
     assert [t.poll() for _ in range(4)] == [True] * 4
 
 
-def test_both_bits_set_at_once_flips_only_once():
-    """按下之后没抬起，低位还留着 —— 两个位同时置 1 也只能算一次。"""
-    t = _toggle(0, trigger.DOWN | trigger.PRESSED, trigger.DOWN)
-    assert t.poll() is False
-    assert t.poll() is True
-    assert t.poll() is True
+def test_the_low_bit_alone_never_turns_it_on():
+    """低位亮着、高位没亮 = 此刻没按着。哪怕它是刚按下的痕迹也不行。
 
-
-def test_hold_release_hold_is_two_clicks():
-    """按着、松开、再按着，算两次点击。
-
-    注意第四帧：松开之后状态【不变】（还是开着）——
-    开关记的是"要不要跟随"，不是"此刻按着没有"。
+    低位是"上次问过之后按过"，读一次就清，而且游戏自己也在读鼠标，
+    经常先被它读走。拿它当"按着"就会时灵时不灵 —— 这条钉住的是
+    "开关只认高位"这个决定。
     """
-    t = _toggle(0, trigger.DOWN, trigger.DOWN, 0, trigger.DOWN)
-    assert [t.poll() for _ in range(5)] == [False, True, True, True, False]
+    t = _hold(0, PRESSED, PRESSED, 0)
+    assert [t.poll() for _ in range(4)] == [False] * 4
+    assert t.presses == 0
 
 
-def test_low_bit_stuck_while_held_flips_only_once():
-    """按着不放期间，低位一直亮着（0x8001 每轮都这样）：也只能翻一次。
+# ----------------------------------------------------------------------
+# 二、按下次数：只给 --check 用，数的是"从没按着变成按着"
+# ----------------------------------------------------------------------
 
-    这是真机上"按了没反应 / 按了又自己关掉"的元凶。低位是
-    "上次问过之后按过"，它在不同外设和驱动下表现不一致 ——
-    有的机器上按住期间会一直亮。原来那句
-    `clicked = bool(state & PRESSED) or (down and not self._down)`
-    在按着的分支里也去看低位，于是每轮翻一次：按一下 0.1 秒，
-    按 20Hz 空转就是一个偶数，开开关关正好抵消，最后停在"关"，
-    用户看到的就是"我按了，它没反应"。
-
-    判据必须是"上一轮我们以为它没按着"，跟低位无关。
-    """
-    held = trigger.DOWN | trigger.PRESSED
-    t = _toggle(0, held, held, held, held, held)
-    assert t.poll() is False
-    assert [t.poll() for _ in range(4)] == [True] * 4
-
-
-def test_stuck_low_bit_then_release_then_press_still_counts():
-    """低位常亮那种机器上，松开、再按一下，还是要翻。
-
-    修的时候最容易修过头：把低位整个不看，快点击就全漏了；
-    或者在按下沿那里忘了复位 _down，第二次按就再也认不出来。
-    """
-    held = trigger.DOWN | trigger.PRESSED
-    t = _toggle(0, held, held, 0, held, held)
-    assert [t.poll() for _ in range(6)] == [False, True, True, True, False, False]
-
-
-def _presses(n, press_state):
+def _holds(n, press_state):
     """读键流：0 起头，然后 n 组"按下 + 松开"。"""
     seq = [0]
     for _ in range(n):
@@ -146,49 +106,68 @@ def _presses(n, press_state):
     return seq
 
 
-def test_pressing_it_again_and_again_keeps_working():
-    """点 N 下就该翻 N 次（N = 1..12）—— 第 N 下和第 1 下走的是同一段代码。
+def test_every_hold_counts_exactly_one_press():
+    """点 N 下就该数出 N 次按下（N = 1..12），不管按住期间低位亮不亮。
 
     用户的原话是"我右键可能点无数次"，所以"一两下有效、点到第三第四下就失灵"
-    这种事不能有。三段读键流都试：只有低位（点击快到整段夹在两帧之间）、
-    只有高位（正常按着不放）、两个位都有（按住期间低位常亮那种机器）。
-    中间任何一下漏了或者翻了两次，后面整串对不上，这里立刻报出来。
+    这种事不能有。--check 就靠这个数报"认到几次按下"：数漏了，用户会以为
+    是权限问题白折腾半天。
     """
-    for press_state in (trigger.PRESSED, trigger.DOWN,
-                        trigger.DOWN | trigger.PRESSED):
+    for press_state in (trigger.DOWN, trigger.DOWN | PRESSED):
         for n in range(1, 13):
-            t = _toggle(*_presses(n, press_state))
+            t = _hold(*_holds(n, press_state))
+            # 第一下是"还没按"，之后 n 组是 按下 / 松开
+            assert t.poll() is False, (n, press_state)
+            assert [t.poll() for _ in range(2 * n)] == [True, False] * n, \
+                (n, press_state)
+            assert t.presses == n, (n, press_state)
 
-            seen = [t.poll()]                    # 还没按，先看一眼
-            assert seen[0] is False, (n, press_state)
 
-            want = [False]
-            for k in range(1, n + 1):
-                want += [k % 2 == 1, k % 2 == 1]  # 按下翻过去，松手保持
-            for _ in range(2 * n):
-                seen.append(t.poll())
+def test_low_bit_stuck_while_held_is_still_one_press():
+    """按住期间低位每轮都亮（0x8001 那种外设）：只算一次按下。
 
-            assert seen == want, (n, press_state)
-            assert t.on is (n % 2 == 1), (n, press_state)
+    数多的话 --check 会报出"认到 20 次按下"这种没人看得懂的结果。
+    """
+    held = trigger.DOWN | PRESSED
+    t = _hold(0, held, held, held, held, held)
+    assert t.poll() is False
+    assert [t.poll() for _ in range(4)] == [True] * 4
+    assert t.presses == 1
+
+
+def test_opening_and_closing_the_scope_many_times_keeps_tracking_the_level():
+    """开镜/关镜来回 12 遍：每一次开镜都在跟，每一次关镜都停手。
+
+    这一条就是用户报的那个 bug 的回归测试：以前开关跟的是按键次数的奇偶，
+    第 1、3、5 次开镜跟得上，第 2、4、6 次就反了。
+    """
+    seq = [0]
+    for _ in range(12):
+        seq += [trigger.DOWN, trigger.DOWN, 0, 0]
+    t = _hold(*seq)
+
+    assert t.poll() is False
+    for k in range(12):
+        assert [t.poll() for _ in range(4)] == [True, True, False, False], k
+    assert t.presses == 12
 
 
 # ----------------------------------------------------------------------
-# 三、读键线程：点击不该跟着主循环的帧率走
+# 三、读键线程：开关不能跟着主循环的帧率走
 # ----------------------------------------------------------------------
 
 def _threaded(value, interval=0.001):
     """造一个带可变状态的开关，专门给线程那几条测试用。"""
-    t = trigger.RightButtonToggle(
+    return trigger.RightButtonHold(
         vk=0x02, key_state=lambda _vk: value['v'], interval=interval)
-    return t
 
 
-def test_a_click_is_seen_even_if_nobody_polls():
-    """起了线程之后，主循环一次都不问，开关也能自己翻过来。
+def test_the_thread_keeps_the_level_current_without_anyone_polling():
+    """起了线程之后，主循环一次都不问，开关也能跟着右键变。
 
-    这是加线程的全部理由：主循环一帧要抓屏 + 推理，几百毫秒，
-    而一次点击只有几十毫秒，靠主循环去问根本问不到；能不能问到
-    还取决于低位有没有被游戏那边先读走，所以时灵时不灵。
+    这是加线程的全部理由：主循环一帧要抓屏 + 推理，几十到几百毫秒，
+    用户松手可能整段都夹在两次询问之间 —— 那就多跟了一帧。
+    线程 5 毫秒读一次，开镜就贴、松手就停。
     """
     value = {'v': 0}
     t = _threaded(value)
@@ -197,17 +176,18 @@ def test_a_click_is_seen_even_if_nobody_polls():
         time.sleep(0.05)
         assert t.on is False            # 什么都没按
 
-        value['v'] = trigger.DOWN       # 按下
+        value['v'] = trigger.DOWN       # 按住 = 开镜
         time.sleep(0.05)
         assert t.on is True
 
-        value['v'] = 0                  # 抬起 —— 只是抬手，不是点击
-        time.sleep(0.05)
-        assert t.on is True
-
-        value['v'] = trigger.DOWN       # 再按一下
+        value['v'] = 0                  # 松开 = 收镜，立刻停手
         time.sleep(0.05)
         assert t.on is False
+
+        value['v'] = trigger.DOWN       # 再按一下，还是开
+        time.sleep(0.05)
+        assert t.on is True
+        assert t.presses == 2
     finally:
         t.close()
 
@@ -215,8 +195,8 @@ def test_a_click_is_seen_even_if_nobody_polls():
 def test_poll_only_reads_the_result_while_the_thread_runs():
     """线程在跑的时候 poll() 不许再读一次键。
 
-    两边都读的话，同一次按下会被翻两下、正好抵消 ——
-    现象还是"按了没反应"，而且比原来更难查。
+    两边都读的话，同一次按下会被数两遍（--check 报出来的次数翻倍），
+    而且主循环和线程会各读到一个不同时刻的状态 —— 白添一层难查的抖动。
     """
     reads = []
 
@@ -224,7 +204,7 @@ def test_poll_only_reads_the_result_while_the_thread_runs():
         reads.append(1)
         return trigger.DOWN
 
-    t = trigger.RightButtonToggle(0x02, key_state=read)
+    t = trigger.RightButtonHold(0x02, key_state=read)
     t._thread = object()            # 假装线程已经起了，不真起一个
     t.on = True
 
@@ -244,72 +224,98 @@ def test_close_stops_the_thread_and_without_start_is_a_noop():
     assert t._thread is None
 
     t.start()
+    time.sleep(0.02)
     t.close()
     assert t._thread is None
 
     was = t.on
     value['v'] = 0
     time.sleep(0.02)
-    assert t.on is was, '线程停了还在翻开关'
+    assert t.on is was, '线程停了还在改开关'
 
 
-def test_gated_frames_start_flowing_after_a_click_and_stop_after_the_next():
-    """接上真正的主循环：点一下帧号开始发，再点一下就不发了。
+# ----------------------------------------------------------------------
+# 四、接上真正的主循环
+# ----------------------------------------------------------------------
 
-    前面测的都是开关自己，这条测的是【开关和主循环接在一起】是不是真的通。
-    用户报的就是这个层面的事 —— "按了没反应"，而不是"poll() 返回值不对"。
-    中间任何一环（谁去读键、读了算不算数、主循环问的是不是同一个对象）
-    接错了，在这条上都会露出来。
+def test_gated_frames_flow_while_held_and_stop_on_release():
+    """接上主循环：按住右键才发帧号，松开就一个都不发。
+
+    前面测的都是开关自己，这条测的是【开关和主循环接在一起】通不通。
+    用户报的现象就是这个层面的："开镜了没反应"和"没按它自己动"。
+    中间任何一环（谁去读键、主循环问的是不是同一个对象、关着的时候
+    是不是真的什么都没干）接错了，在这条上都会露出来。
     """
     from main import runmode
 
     value = {'v': 0}
-    gate = trigger.RightButtonToggle(
+    gate = trigger.RightButtonHold(
         vk=0x02, key_state=lambda _vk: value['v'], interval=0.001)
     a = argparse.Namespace(loop=0)
     said = []
+    opens = []
 
     gate.start()
     try:
-        frames = runmode.gated_frames(a, gate, said.append, idle_interval=0.001)
-        value['v'] = trigger.DOWN          # 第一下：开
-        time.sleep(0.05)
-        assert [next(frames) for _ in range(3)] == [1, 2, 3]
+        frames = runmode.gated_frames(a, gate, said.append, idle_interval=0.001,
+                                      on_open=lambda: opens.append(1))
 
-        value['v'] = 0
-        time.sleep(0.02)
-        value['v'] = trigger.DOWN          # 第二下：关
-        value['v'] |= trigger.PRESSED      # 真机上低位常常还亮着，一起带上
-        time.sleep(0.05)
-        value['v'] = 0
-        time.sleep(0.05)
-
-        # 关掉之后一个帧号都不该再出来。用超时保护：真漏了的话
-        # next() 会一直阻塞，测试挂死比失败更难查。
+        # 没按的时候：连第一次 next() 都不该返回。超时保护是必须的 ——
+        # 真漏了的话 next() 会一直阻塞，测试挂死比失败更难查。
         box = {}
         t = threading.Thread(
             target=lambda: box.update(v=next(frames)), daemon=True)
         t.start()
-        t.join(timeout=0.3)
-        assert t.is_alive(), f'关了开关还在发帧号，发出了 {box.get("v")}'
+        time.sleep(0.05)
+        assert box == {}, f'没按右键就发了帧号 {box.get("v")}'
+        assert opens == []
+
+        value['v'] = trigger.DOWN          # 按住：开镜
+        t.join(timeout=0.5)
+        assert box.get('v') == 1
+        assert [next(frames) for _ in range(2)] == [2, 3]
+        assert opens == [1]
+
+        value['v'] = 0                     # 松开：收镜，一个帧号都不该再发
+        time.sleep(0.05)
+        box2 = {}
+        t2 = threading.Thread(
+            target=lambda: box2.update(v=next(frames)), daemon=True)
+        t2.start()
+        t2.join(timeout=0.3)
+        assert t2.is_alive(), f'松开右键还在发帧号，发出了 {box2.get("v")}'
+        assert box2 == {}
+        assert opens == [1]
+
+        # 同一个还堵着的线程接着读：再开一次镜，它应该立刻拿到第 4 帧。
+        # 【不能】另外用主线程去 next() —— 生成器一次只能有一个线程在里面，
+        # 两边同时读会撞成 "generator already executing"，而且谁先拿到这一帧
+        # 是随机的，测试会时好时坏。
+        value['v'] = trigger.DOWN
+        t2.join(timeout=0.5)
+        assert box2.get('v') == 4, '再开镜之后帧号没接着往下走'
+        assert opens == [1, 1], '每次开镜都该清一次跟随器的配对'
     finally:
         gate.close()
 
-    assert said == [runmode.switch_message(True), runmode.switch_message(False)]
+    assert said == [runmode.switch_message(False),
+                    runmode.switch_message(True),
+                    runmode.switch_message(False),
+                    runmode.switch_message(True)]
 
 
 # ----------------------------------------------------------------------
-# 四、本机上（非 Windows）不能炸
+# 五、本机上（非 Windows）不能炸
 # ----------------------------------------------------------------------
 
 def test_non_windows_read_returns_zero():
-    """非 Windows 上读键返回 0：永远"没按过"，不会误触发。"""
+    """非 Windows 上读键返回 0：永远"没按着"，不会误触发。"""
     assert trigger.get_async_key_state(0x02) == 0
 
 
 def test_default_key_state_is_usable_here():
     """不塞假函数也能构造、能 poll，不会抛异常（本机是 Linux）。"""
-    t = trigger.RightButtonToggle(0x02)
+    t = trigger.RightButtonHold(0x02)
     assert t.poll() is False
 
 

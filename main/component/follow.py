@@ -4,13 +4,16 @@
 aim.py 只管算，不碰鼠标；app.py 管主循环。中间这一层负责：
     0. 记住上一帧推了多少、误差变成了多少，交给 aim.GainTuner 去标定增益
        （不标的话，用户填的那个倍率不对就是"准星一格一格慢慢滑过去"）
+    0.5 把标定出来的灵敏度（一个计数几个像素）传给 aim，让它判断"不足一格凑成
+       一格"会不会把准星推过目标 —— 会就不推。少了这一步，高倍镜下每帧都在目标
+       两侧蹦一格，画面一直在抖。
     1. 每帧按算出来的位移调一次鼠标
     2. 出错时【只说一次】—— 每帧都报错的话会把 out\\bg.log 刷成几万行，
        真正有用的那几行就被埋了（现在的 bg.log 就是这么被刷爆的）
     3. 加 --follow-trace 时，每帧说清楚这一帧为什么动、为什么不动。
-       不加这个的话，"没检出目标""分数没过门槛""已经在死区里"三种情况
-       从外面看起来完全一样 —— 鼠标不动、也不打印任何东西，
-       用户根本没法判断功能到底有没有生效。
+       不加这个的话，"没检出目标""分数没过门槛""已经在死区里""还差一点点
+       但不足一格"这几种情况从外面看起来完全一样 —— 鼠标不动、
+       也不打印任何东西，用户根本没法判断功能到底有没有生效。
 
 mover 是注入进来的：真跑的时候是 buke_km 的 move_relative，
 所以本文件可以脱离 Windows 和 DLL 单独测。
@@ -55,6 +58,7 @@ class Follower:
         """处理这一帧。返回要转告用户的一句话；没什么新鲜的就返回 None。"""
         best = aim.pick_best(targets, self._min_confidence)
         step = None
+        stuck = None        # 想推但一格都不该推时，(还差多少像素, 一格多少像素)
 
         if best is None:
             # 目标丢了，上一帧那笔"推完误差变成多少"就无从比对了，作废。
@@ -63,14 +67,25 @@ class Follower:
             error = (best['x'] - self._crosshair[0],
                      best['y'] - self._crosshair[1])
             self._learn(error)
+            gain = self._gain_now(error)
+            per_count = self._per_count_now(gain)
             step = aim.plan_relative_move(
-                best, self._crosshair, self._gain_now(error), self._deadzone)
+                best, self._crosshair, gain, self._deadzone, per_count)
+            if step == (0, 0):
+                # 两个轴都是"不足一格，但推一格会跨过目标"：这一帧不推。
+                # 这是高倍镜下准星一直在抖的正面解药，见 aim._steps。
+                #
+                # 这里连鼠标都不碰：(0,0) 到了 buke_km 那边仍然是一次真实的
+                # 鼠标调用（HID 模式下等于每帧多发一份空报文），白费一帧；
+                # 还会把 --follow-trace 的"第 N 次"刷成几千，看着像一直在动。
+                stuck = (error[0], error[1], per_count)
+                step = None
             # 记的是【推之前】的误差；下一帧重测到的误差才是结果。
-            # 已经在死区里（step 为 None）没推，就没得比，也清掉。
+            # 没推出去的帧（死区里、或者这一帧不推）没得比，也清掉。
             self._last = None if step is None else (step, error)
 
         if self._trace:
-            self._trace(self._describe(targets, best, step))
+            self._trace(self._describe(targets, best, step, stuck))
 
         if step is None:
             # 没目标或已经对准，都算正常。清掉上次的错误，
@@ -91,7 +106,7 @@ class Follower:
         """新一轮跟随开始，把上一轮那笔配对作废。
 
         为什么必须清：_learn() 比的是"上一帧推了多少计数、误差因此变成多少"。
-        开关关着的那段时间一帧都没有，_last 就一直停在上一次跟随的最后一帧上；
+        没按右键的那段时间一帧都没有，_last 就一直停在上一次跟随的最后一帧上；
         再开镜时第一帧拿它跟这一帧的误差去比，配的根本不是同一件事 ——
         反推出来的灵敏度可以错得离谱，第一下就把准星甩到别处去。
         用户报的就是"开了右键之后鼠标先乱动几下"，这是其中一半的原因。
@@ -114,6 +129,21 @@ class Follower:
             return self._gain
         return self._tuner.gain_for(error)
 
+    def _per_count_now(self, gain):
+        """这台机器上一个鼠标计数大概移动几个屏幕像素。
+
+        这是 aim 判断"不足一格的那一格会不会跨过目标"要用的数，也就是
+        GainTuner 标出来的那个灵敏度。没标出来（自标定关着，或者刚开镜第一帧）
+        就退回 1/gain：用户填的倍率本来就写着"像素 -> 计数"，反过来是一样的意思，
+        --no-auto-gain 时那正是他要的灵敏度。gain 小到取不了倒数
+        （有 GAIN_MIN 兜着，不该出现）就退回 1.0 —— 宁可多推一格，也不许除零。
+        """
+        if self._tuner is not None:
+            k = self._tuner.px_per_count
+            if k is not None:
+                return k
+        return 1.0 / gain if gain > 0 else 1.0
+
     def _learn(self, error):
         """拿上一帧的结果修正倍率：上一帧推了 step、误差从 prev 变成 error。
 
@@ -124,11 +154,12 @@ class Follower:
             return
         self._tuner.observe(self._last[0], self._last[1], error)
 
-    def _describe(self, targets, best, step):
+    def _describe(self, targets, best, step, stuck=None):
         """这一帧的判定过程，一句话说完。
 
-        四种结局必须能分辨开，否则用户看到的现象统统只是"鼠标没动"：
-            没检出目标 / 检出了但分数不够 / 选中了谁并推多少 / 已经对准不用推
+        五种结局必须能分辨开，否则用户看到的现象统统只是"鼠标没动"：
+            没检出目标 / 检出了但分数不够 / 选中了谁并推多少 /
+            已经在死区里 / 还差一点点但不足一格
         """
         if not targets:
             return '跟随  这一帧没检出任何目标'
@@ -143,6 +174,12 @@ class Follower:
                 f'准星 ({cx},{cy})')
 
         if step is None:
+            if stuck is not None:
+                # 和"已在死区"分开说：这句解释的是"为什么明明还差着像素却不动"，
+                # 不说清楚的话用户会当成跟随卡住了，然后去调增益和死区。
+                dx, dy, per_count = stuck
+                return (f'{head}  还差 ({dx:.0f},{dy:.0f}) 像素，不到半格'
+                        f'（一格约 {per_count:.0f} 像素），再推就过头了，不动')
             return f'{head}  已在死区 {self._deadzone} 像素内，不动'
 
         return f'{head}  推 ({step[0]},{step[1]})  第 {self._moves + 1} 次'

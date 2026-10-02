@@ -3,10 +3,13 @@
 
 这就是整个程序的入口逻辑，start.py 只负责调用这里的 main()。
 
-【跟随是带开关的】：默认关着，什么都不做（不抓屏、不检测、不动鼠标）。
-要跟随就按一下鼠标右键，再按一下停手。为什么要有开关 —— 用户自己也在用
-鼠标转视角，程序每帧都动鼠标就是两只手抢一个鼠标，手感是"我划到哪它给我拽回来"。
+【跟随是带开关的】：不按的时候什么都不做（不抓屏、不检测、不动鼠标）。
+开关就是鼠标右键本身 —— 按住（开镜）就跟随，一松开就停手，和游戏里开镜
+是同一个动作。为什么要有开关 —— 用户自己也在用鼠标转视角，程序每帧都动鼠标
+就是两只手抢一个鼠标，手感是"我划到哪它给我拽回来"。
 不想用开关加 --always，就是"一直跟随"的老行为。
+（按住/松开是【电平】，不是"按一次翻一次"：后者在按住开镜的游戏里会跟按键
+次数的奇偶走，表现为"关镜跟着、开镜不动"，见 component/trigger.py。）
 
 动鼠标用的是相对移动（MouseMoveR），从准星位置朝目标推一点点，每帧重算。
 不是"把鼠标挪到目标坐标"—— 那种做法在锁定视角的游戏里会让镜头一帧甩过去。
@@ -43,7 +46,7 @@ from .component.detector import Detector
 from .component.follow import Follower
 from .component.report import fmt_cleanup, fmt_frame, fmt_summary
 from .component.screen import dpi_aware, grab, screen_size
-from .component.trigger import RightButtonToggle
+from .component.trigger import RightButtonHold
 from .config import DEFAULT_JSONL, DEFAULT_LOG, TRIGGER_VK
 
 # 这里【故意不调用 buke_km.configure()】。
@@ -125,8 +128,8 @@ def main(argv=None):
 def _print_banner(say, a, det, coords_mode, gate, follower):
     """启动时打印几行说明，让人确认参数没填错。
 
-    跟随那两行必须说：开关默认是关的，程序起来之后一动不动。
-    不告诉用户"按右键才开始"，他会以为程序坏了 —— 这正是加开关必然带来的代价。
+    跟随那两行必须说：不按右键的时候程序一动不动。
+    不告诉用户"按住右键才开始"，他会以为程序坏了 —— 这正是加开关必然带来的代价。
     """
     say(f'engine  {os.path.basename(a.engine)}  {det.describe()}')
     say(f'抓屏区域  {a.region if a.region else "整屏"}')
@@ -146,8 +149,8 @@ def _print_banner(say, a, det, coords_mode, gate, follower):
     elif gate is None:
         say('跟随  一直跟随（--always，所以没有开关）')
     else:
-        say('跟随开关  鼠标右键：第一次按开始跟随，再按一次停手')
-        say('          关着的时候不抓屏、不检测、也不动鼠标')
+        say('跟随开关  鼠标右键：按住（开镜）就跟随，一松开就停手')
+        say('          没按的时候不抓屏、不检测、也不动鼠标')
         gain = (f'{a.gain}（自动标定中）' if not a.no_auto_gain
                 else f'{a.gain}（固定，--no-auto-gain）')
         say(f'跟随方式  从准星朝目标推（增益 {gain} '
@@ -192,7 +195,7 @@ class _LazyMover:
 def _build_follow(a, say):
     """准备开关和跟随器，返回 (gate, follower, mover)。
 
-    gate     None 表示不做开关判断（--always）
+    gate     None 表示不做开关判断（--always，一直跟随）
     follower None 表示不动鼠标（拿不到屏幕尺寸时）
     mover    持有 DLL 的那个对象，退出时要 close
 
@@ -200,7 +203,7 @@ def _build_follow(a, say):
     注意准星用【整屏】中心，和目标坐标一个口径（target_center 加的也是整屏绝对坐标），
     所以带不带 --region 都算得对。
     """
-    gate = None if a.always else RightButtonToggle(TRIGGER_VK)
+    gate = None if a.always else RightButtonHold(TRIGGER_VK)
 
     size = screen_size()
     if size is None:
@@ -303,7 +306,7 @@ def _run_frames(a, det, out, log, coords, coords_mode, say, gate, follower):
 
     a.loop <= 0（默认）时这个循环不会自己结束，
     要靠 Ctrl+C 或另一个进程执行 --stop 把它停掉。
-    有开关时它会在开关关着的那段时间里原地空转，不产生帧号。
+    有开关时它会在没按右键的那段时间里原地空转，不产生帧号。
     """
     off = a.region[:2] if a.region else (0, 0)
     total_ms = []

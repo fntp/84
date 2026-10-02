@@ -4,7 +4,7 @@
 为什么需要这个文件：
     跟随没生效这件事，从外面看【永远是同一个现象】—— 鼠标不动。
     可原因至少有四个，而且互相之间完全看不出来：
-        1. 右键开关根本没打开（权限比游戏低，GetAsyncKeyState 收不到输入）
+        1. 右键按着却读不到（权限比游戏低，GetAsyncKeyState 收不到输入）
         2. buke_km 起不来（驱动没装 / 不是管理员 / 联网探测不通）
         3. 相对移动发不出去（DLL 能动，但这个接口没通）
         4. 每一环都正常，只是画面上那一帧没检出人 / 分数没过门槛
@@ -23,7 +23,7 @@ import sys
 import time
 
 from .component.screen import dpi_aware, screen_size
-from .component.trigger import RightButtonToggle
+from .component.trigger import RightButtonHold
 from .config import TRIGGER_VK
 
 
@@ -36,7 +36,7 @@ def _admin():
 
     为什么专挑这一项：游戏基本都是管理员权限跑的。Windows 的 UIPI
     不允许低权限进程读高权限窗口的输入 —— 游戏一开管理员，这边
-    GetAsyncKeyState 就再也看不到右键，开关永远打不开，跟随一次都不触发。
+    GetAsyncKeyState 就再也看不到右键，跟随一次都不触发。
     这个失败【没有任何报错】，现象就是"没反应"，最容易误判成代码坏了。
     """
     try:
@@ -94,37 +94,35 @@ def probe_move(sleep=time.sleep, push=200):
 
 
 # ----------------------------------------------------------------------
-# 四、右键开关：盯着看它认不认得点击
+# 四、右键开关：盯着看它认不认得按下
 # ----------------------------------------------------------------------
 
-def watch_toggle(gate, seconds, clock=time.monotonic, sleep=time.sleep,
-                 interval=0.02):
-    """盯着开关看 seconds 秒，返回认到了几次点击。
+def watch_presses(gate, seconds, clock=time.monotonic, sleep=time.sleep,
+                  interval=0.02):
+    """盯着开关看 seconds 秒，返回认到了几次按下。
 
-    数的是【状态变化次数】—— 每点一下右键，开关正好翻一次
-    （关->开 或 开->关），所以变化次数就等于点击次数，让按两下就报 2。
-    不要改成"数打开的瞬间"：第一次点开、第二次点关，那样只数得到 1 次，
-    用户明明按了两下却被告知 1 次，会以为是自己按漏了。
+    数的是 gate.presses（从"没按着"变成"按着"记一次），不是这个循环自己
+    轮询到的状态变化。原因：这个循环 20 毫秒才问一次，手快的一下可能整段
+    夹在两次问之间（问的时候已经松开了），那时候两次 poll 都看到"没按着"，
+    状态变化那一路会把它整个漏掉 —— 而按下次数是读键线程按 5 毫秒的节奏
+    数的，漏不掉。
 
-    第一次 poll 只用来记初始状态，不算变化 —— 开关万一本来就在开的位置，
-    不该凭空算成用户点了一下。
+    先 poll 一次把起点记下来：开关可能一进来就已经按着（用户手还停在右键
+    上），那一下不是他在这个窗口里按的，不该算。
 
-    用的是程序里真正在用的那个 RightButtonToggle，不另写一份判断 ——
+    用的是程序里真正在用的那个 RightButtonHold，不另写一份判断 ——
     这样"这里认得到、游戏里认不到"才能推出"是权限问题"这个结论；
     两边各写各的判断，就分不清是环境的问题还是逻辑的问题了。
 
     clock / sleep 是注入的，测的时候不用真的等。
     """
+    gate.poll()
+    base = gate.presses
     start = clock()
-    clicks = 0
-    prev = None
     while True:
-        on = gate.poll()
-        if prev is not None and on != prev:
-            clicks += 1
-        prev = on
+        gate.poll()
         if clock() - start >= seconds:
-            return clicks
+            return gate.presses - base
         sleep(interval)
 
 
@@ -182,7 +180,7 @@ def run(say, wait=8.0, clock=time.monotonic, sleep=time.sleep, move=True):
     else:
         report(admin, '管理员权限', '是' if admin else
                '不是 —— 游戏通常用管理员启动，那时候系统不许低权限进程读它的输入，'
-               '右键开关永远打不开。用管理员身份开个终端再跑本程序试试。')
+               '右键永远读不到。用管理员身份开个终端再跑本程序试试。')
 
     title = _foreground_title()
     report(None, '当前前台窗口', title if title else '读不到')
@@ -216,20 +214,20 @@ def run(say, wait=8.0, clock=time.monotonic, sleep=time.sleep, move=True):
         ok, detail = probe_move(sleep=sleep)
         report(ok, '相对移动 MouseMoveR', detail)
 
-    say(f'\n请在接下来 {wait:.0f} 秒内【按两下鼠标右键】'
-        f'（按一下开始跟随、再按一下停手，两下都按才能把两个状态都验到）。')
-    gate = RightButtonToggle(TRIGGER_VK)
+    say(f'\n请在接下来 {wait:.0f} 秒内【按住鼠标右键、松开，这样来两遍】'
+        f'（按住 = 开镜 = 跟随，松开 = 停手）。')
+    gate = RightButtonHold(TRIGGER_VK)
     # 起读键线程，和真正跑起来的时候一模一样（app.py 里也是这么起的）。
     # 这里要是用自己的 0.02 秒轮询去读，就比真跑的时候钝 ——
     # 真跑时那 5 毫秒一次的读键没被验到，而这一项的全部意义就是
     # 【证明按得动】，自检比实际更钝的话，它报"认不到"就等于在骗人。
     gate.start()
     try:
-        clicks = watch_toggle(gate, wait, clock=clock, sleep=sleep)
+        clicks = watch_presses(gate, wait, clock=clock, sleep=sleep)
     finally:
         gate.close()
     if clicks:
-        report(True, f'右键开关 VK 0x{TRIGGER_VK:02X}', f'认到 {clicks} 次点击')
+        report(True, f'右键开关 VK 0x{TRIGGER_VK:02X}', f'认到 {clicks} 次按下')
     else:
         report(False, f'右键开关 VK 0x{TRIGGER_VK:02X}',
                '一次都没认到 —— 要么本程序权限比游戏低（用管理员启动本程序），'

@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """跟随瞄准的算法测试（纯计算，不需要显卡、Windows、buke_km、真实鼠标）。
 
-钉的是三件最容易写反的事：
+钉的是四件最容易写反的事：
 
     1. 挑目标挑的是【置信度最高】的，不是列表里第一个
     2. 位移的【方向】不能反（反了就是"越瞄越偏"，用户会以为程序在捣乱）
     3. 方向不能因为"太小"被抹成 0 —— 抹成 0 就永远差最后一格，看着像瞄不准
+    4. 但"不足一格"也不能一律凑成 ±1：一格比剩下的距离还大的时候硬凑，
+       准星会在目标两侧一直蹦，也就是用户看到的"鼠标乱晃乱抖"
 
 运行方式（在项目根目录下，不需要 pytest）：
 
@@ -66,13 +68,17 @@ def test_pick_best_tie_keeps_the_first():
 # ----------------------------------------------------------------------
 
 def test_steps_keeps_direction_of_tiny_offset():
-    """差得再少也要凑成 ±1。返回 0 的话准星永远差最后一格，看着就是"瞄不准"。"""
+    """差得再少也要凑成 ±1。返回 0 的话准星永远差最后一格，看着就是"瞄不准"。
+
+    不传 per_count 时按"一格一个像素"算，也就是不知道灵敏度时最保守的那种：
+    只要差着一个像素就推一格。
+    """
     assert aim._steps(1, 0.5) == 1
     assert aim._steps(-1, 0.5) == -1
 
 
-def test_steps_is_zero_only_when_already_aligned():
-    """真的重合了才是 0，不能顺手把"很小"当成"没有"。"""
+def test_steps_is_zero_when_exactly_aligned():
+    """真的重合了就是 0，不能顺手把"很小"当成"没有"。"""
     assert aim._steps(0, 0.5) == 0
 
 
@@ -81,6 +87,41 @@ def test_steps_scales_by_gain():
     assert aim._steps(100, 0.5) == 50
     assert aim._steps(100, 1.0) == 100
     assert aim._steps(100, 2.0) == 200
+
+
+def test_steps_still_rounds_up_when_the_offset_is_more_than_half_a_count():
+    """一格 40 像素、还差 25 像素：凑一格剩 15，是靠近，该推。
+
+    凑格子的条件不是"误差小就不推"，而是"凑一格会不会跨过目标"。
+    25 > 40/2 所以不会跨过去，这一格得推 —— 不然差着 25 个像素
+    准星就不动了，用户看到的是"总也瞄不准"。
+    """
+    assert aim._steps(25, 0.02, 40) == 1
+    assert aim._steps(-25, 0.02, 40) == -1
+
+
+def test_steps_stands_still_when_one_count_would_overshoot():
+    """一格 40 像素、还差 20 像素甚至更少：凑一格必然推到目标另一侧，不推。
+
+    这就是高倍镜下"鼠标一直在抖"的算法根因：推过去 20、下一帧再推回来 20，
+    每帧都在目标两边蹦一个格子的距离。宁可停在离目标不到半格的地方，
+    那是推鼠标能达到的物理极限。
+    """
+    assert aim._steps(20, 0.02, 40) == 0      # 刚好半格（<=，边界算不推）
+    assert aim._steps(10, 0.02, 40) == 0
+    assert aim._steps(-10, 0.02, 40) == 0
+
+
+def test_steps_without_per_count_never_stands_still():
+    """没传 per_count 的调用点行为不变：只要不是重合就一定会推一格。
+
+    这条钉的是"新加的那个参数不能悄悄改掉老调用点的行为" ——
+    默认值 1.0 时 2*|px| <= 1 只在 |px| <= 0.5 时成立，而 px 是像素差，
+    整数里只有 0 会落进去，那已经在上面那条里返回 0 了。
+    """
+    assert aim._steps(1, 0.5) == 1
+    assert aim._steps(-1, 0.5) == -1
+    assert aim._steps(3, 0.2) == 1
 
 
 # ----------------------------------------------------------------------
@@ -104,6 +145,28 @@ def test_plan_moves_outside_deadzone_with_correct_sign():
 def test_plan_moves_one_axis_when_the_other_is_aligned():
     """只有一个方向有偏差时，另一个方向必须是 0，不能顺手晃一下。"""
     assert aim.plan_relative_move(_t(900, 600, 0.9), (800, 600), 1.0, 12) == (100, 0)
+
+
+def test_plan_keeps_the_axis_that_can_still_close_in():
+    """两个轴【各算各的】：能靠近的那个轴照样推，不会因为另一个轴停住就一起停。
+
+    一格 40 像素时，还差 100 像素的横轴该推（凑一格剩 60，是靠近），
+    还差 10 像素的纵轴一推就跨过去，那就只推横轴。整轴一起停的话，
+    横向永远差 100 像素 —— 表现成"准星只在目标左边待着，不往右走"。
+    """
+    assert aim.plan_relative_move(_t(1060, 550, 0.9), (960, 540), 0.02, 12,
+                                  per_count=40) == (2, 0)
+
+
+def test_plan_says_still_when_neither_axis_can_close_in():
+    """两轴都"推一格就过头"时返回 (0,0)，不是 None。
+
+    这两种情况必须分得开：None 是"已经在死区里"，(0,0) 是"还没对准，
+    但推鼠标已经推不动了"。上层要靠它说一句人话给用户听，
+    不然用户看到的就是"明明差着像素却一动不动"。
+    """
+    assert aim.plan_relative_move(_t(970, 550, 0.9), (960, 540), 0.02, 2,
+                                  per_count=40) == (0, 0)
 
 
 def test_plan_deadzone_boundary_is_inclusive():

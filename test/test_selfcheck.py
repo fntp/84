@@ -3,7 +3,7 @@
 
 为什么这个必须测：
     --check 是用户手上唯一一把能区分"环境坏了"和"代码坏了"的尺子。
-    它要是自己数错了 —— 比如按了两下右键却报"认到 1 次点击" ——
+    它要是自己数错了 —— 比如按了两下右键却报"认到 1 次按下" ——
     用户会照着这个错结论去乱调环境，比没有这把尺子还糟。
     所以这里盯的是【计数】和【结论】这两件事，不是"能不能跑"。
 
@@ -34,7 +34,7 @@ from main.component import trigger                                      # noqa: 
 # ----------------------------------------------------------------------
 
 class _Clock:
-    """假时钟和假 sleep 共用一个时间轴，这样 watch_toggle 不用真的等。"""
+    """假时钟和假 sleep 共用一个时间轴，这样 watch_presses 不用真的等。"""
 
     def __init__(self):
         self.t = 0.0
@@ -59,26 +59,26 @@ def _keys(*states):
 
 
 def _gate(*states):
-    return trigger.RightButtonToggle(vk=0x02, key_state=_keys(*states))
+    return trigger.RightButtonHold(vk=0x02, key_state=_keys(*states))
 
 
 def _watch(gate, seconds=0.1):
     c = _Clock()
-    return selfcheck.watch_toggle(gate, seconds, clock=c.now, sleep=c.sleep)
+    return selfcheck.watch_presses(gate, seconds, clock=c.now, sleep=c.sleep)
 
 
 # ----------------------------------------------------------------------
 # 一、计数：报出来的次数必须就是用户按的次数
 # ----------------------------------------------------------------------
 
-def test_two_clicks_are_reported_as_two():
+def test_two_holds_are_reported_as_two():
     """让用户"按两下"，就得报 2。
 
-    这是最容易数错的地方：第二次点击是把开关【关掉】，如果只数"打开的瞬间"，
-    这里会得出 1 —— 用户明明按了两下却被告知 1 次，只会以为自己按漏了，
-    然后反复重试，把一个好环境当成坏的。所以数的是状态变化次数。
+    这是最容易数错的地方。报少了，用户明明按了两下却被告知 1 次，
+    只会以为自己按漏了，然后反复重试，把一个好环境当成坏的；
+    报多了，他会以为开关在乱翻。所以数的是【从没按着变成按着】那几下。
     """
-    assert _watch(_gate(0, trigger.PRESSED, 0, trigger.PRESSED, 0)) == 2
+    assert _watch(_gate(0, trigger.DOWN, 0, trigger.DOWN, 0)) == 2
 
 
 def test_no_click_is_zero_not_an_error():
@@ -87,40 +87,42 @@ def test_no_click_is_zero_not_an_error():
 
 
 def test_holding_the_button_counts_once():
-    """按住不放只算一次点击，不能按帧数往上累。
+    """按住不放只算一次按下，不能按帧数往上累。
 
     按住 0.1 秒就是好几个 poll，按帧数算的话用户轻轻一按会被报成 5 次，
-    然后他会以为开关在乱翻。
+    然后他会以为开关在乱翻。电平判断天然就是一次：只有"上一轮没按着"
+    才记一下。
     """
-    down = trigger.DOWN
-    assert _watch(_gate(0, down, down, down, down, down)) == 1
+    assert _watch(_gate(0, trigger.DOWN)) == 1
 
 
 def test_initial_position_is_not_counted_as_a_click():
-    """第一次 poll 只用来记初始状态，不比较、也不计数。
+    """最开始就按着的那一下不算 —— 那是用户手还停在右键上，不是这次按的。
 
-    否则开关本来就按着（或者读键那一下正好落在按下中间）会凭空多报一次，
+    watch_presses 进来先 poll 一次把起点记下来，数的就是这个窗口
+    【之后】新增的按下次数。少了这一步，开关本来就按着会凭空多报一次，
     用户按两下却看到 3 —— 数字对不上他就会一直重试。
     """
     c = _Clock()
     gate = _gate(trigger.DOWN)          # 一上来就按着，之后一直是这个状态
-    assert selfcheck.watch_toggle(gate, 0.02, clock=c.now, sleep=c.sleep) == 0
+    assert selfcheck.watch_presses(gate, 0.02, clock=c.now, sleep=c.sleep) == 0
 
 
-def test_a_click_shorter_than_the_watch_interval_is_still_counted():
-    """整段点击都夹在 watch_toggle 两次 poll 之间，也必须数到。
+def test_a_press_shorter_than_the_watch_interval_is_still_counted():
+    """整段按下都夹在 watch_presses 两次 poll 之间，也必须数到。
 
-    run() 里是 gate.start() 之后再 watch_toggle，理由就在这里：
-    靠 watch_toggle 自己那个 0.02 秒的轮询去读，按下和抬起都在两次
-    轮询之间的话，整整一下点击就是看不见的 —— 用户按得动，
-    尺子说按不动，他会跑去改权限和驱动，全白费。
+    run() 里是 gate.start() 之后再 watch_presses，理由就在这里：
+    靠 watch_presses 自己那个 0.02 秒的轮询去读，按下和抬起都在两次
+    轮询之间的话，两次问到的都是"没按着"，整整一下就是看不见的 ——
+    用户按得动，尺子说按不动，他会跑去改权限和驱动，全白费。
+    按下次数是读键线程按 5 毫秒的节奏数的，漏不掉。
 
     这条特意把轮询间隔拉到 0.25 秒（远大于那次 20 毫秒的按下），
     让"只靠轮询"必漏，只有读键线程数得到。用的是真时钟，因为
     要验的正是"两次 poll 之间发生了什么"这件事本身。
     """
     value = {'v': 0}
-    gate = trigger.RightButtonToggle(
+    gate = trigger.RightButtonHold(
         vk=0x02, key_state=lambda _vk: value['v'], interval=0.001)
 
     def click():
@@ -133,12 +135,12 @@ def test_a_click_shorter_than_the_watch_interval_is_still_counted():
     clicker = threading.Thread(target=click, daemon=True)
     clicker.start()
     try:
-        clicks = selfcheck.watch_toggle(gate, 0.6, interval=0.25)
+        clicks = selfcheck.watch_presses(gate, 0.6, interval=0.25)
     finally:
         clicker.join()
         gate.close()
 
-    assert clicks == 1, f'夹在两次轮询中间的点击没被数到（数到 {clicks} 次）'
+    assert clicks == 1, f'夹在两次轮询中间的按下没被数到（数到 {clicks} 次）'
 
 
 # ----------------------------------------------------------------------

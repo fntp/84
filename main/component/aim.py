@@ -24,6 +24,16 @@
     同一台机器换个游戏、改个设置就变。所以不能猜死一个值：
     拿上一帧的实测结果当场反推（推了 c 个计数、误差从 e0 变成 e1，
     说明这台机器的灵敏度约等于 (e0-e1)/c），下一帧就按这个去推。
+
+为什么"不足一格"不能一律凑成 ±1（准星一直在抖的根因）：
+    游戏把一个整计数的位移转成视角，不足一格的它直接丢掉，所以差一点点的时候
+    必须凑一格才靠得拢。但凑格子有个前提：这一格推出去得是【靠近】。
+    高倍镜下（开镜之后一个计数动几十像素）差 9 个像素时凑一格就是推过目标
+    20 像素，下一帧误差变成反的 11 像素，再凑一格又推到对面 9 像素 ——
+    误差永远在目标两侧一个格子的距离上来回蹦，用户看到的就是"鼠标一直在抖"。
+    所以凑格子的条件改成"这一格不会跨过目标"：差得比半格还少就不推。
+    代价是每一轴会留下不到半格的残差，那是这台机器灵敏度的物理极限，
+    推鼠标消不掉。
 """
 
 
@@ -49,20 +59,30 @@ def pick_best(targets, min_confidence):
     return best
 
 
-def _steps(px, gain):
+def _steps(px, gain, per_count=1.0):
     """一维：屏幕像素差 -> 鼠标计数。
 
-    方向永远保留：不足一个计数时也要凑成 ±1。
-    游戏那边把不足一格的位移丢掉，如果这里返回 0，准星就永远差那么一点靠不拢
+    方向要保留：不足一个计数时凑成 ±1，否则准星会永远差那么一点靠不拢
     （离得越近推得越少，最后停在死区外一点点，看着就是"总也瞄不准"）。
+
+    但凑格子只在【这一格不会跨过目标】时才凑，也就是差得超过半格的时候。
+    per_count 是这台机器上一个鼠标计数移动多少屏幕像素。差得不足半格还硬推一格，
+    误差会从 +x 翻成 -x'，下一帧再推回来，永远在目标两侧一个格子的距离上来回蹦 ——
+    就是"鼠标一直在抖"。这时候返回 0，让准星停在离目标不到半格的地方，
+    那是推鼠标能达到的极限。
+
+    per_count 默认 1.0 = "一格一个像素"：不传它的调用点（测试、只看方向的场合）
+    行为跟以前一模一样，只是那半边不再硬凑。
     """
     counts = int(round(px * gain))
     if counts == 0 and px != 0:
+        if 2.0 * abs(px) <= per_count:
+            return 0
         counts = 1 if px > 0 else -1
     return counts
 
 
-def plan_relative_move(target, crosshair, gain, deadzone):
+def plan_relative_move(target, crosshair, gain, deadzone, per_count=1.0):
     """算这一帧的鼠标相对位移，返回 (dx, dy)；不需要动就返回 None。
 
     参数：
@@ -72,6 +92,13 @@ def plan_relative_move(target, crosshair, gain, deadzone):
         deadzone     死区半径（像素）。目标落在这个圈里就当已经对准，
                      一动不动的意义是：不抖。准星附近一点点像素的框中心抖动，
                      换算成计数会让画面来回微颤，看着很难受。
+        per_count    一个鼠标计数等于几个屏幕像素（灵敏度）。只用来判断
+                     "不足一格的那一格会不会跨过目标"，见 _steps。
+                     不知道就传 1.0，那时只要差着一个像素就会推一格。
+
+    两个轴【各算各的】，别把死区当成"两个轴一起停"：目标在正右方 100 像素、
+    上下只差 3 像素时，上下这一轴按上面的规则本来就该是 0。以前会硬凑一格，
+    于是每帧上下都跳一格（高倍镜下就是几十像素），画面看着就是一直在抖。
 
     注意 target 和 crosshair 必须是同一个坐标系。target_center 加 region 偏移后
     已经是屏幕绝对坐标，屏幕中心也是屏幕绝对坐标，所以带不带 --region 都对得上。
@@ -83,7 +110,7 @@ def plan_relative_move(target, crosshair, gain, deadzone):
     if dx * dx + dy * dy <= deadzone * deadzone:
         return None
 
-    return _steps(dx, gain), _steps(dy, gain)
+    return _steps(dx, gain, per_count), _steps(dy, gain, per_count)
 
 
 # ----------------------------------------------------------------------
@@ -182,6 +209,15 @@ class GainTuner:
         self._blend = blend
         self._px_per_count = None      # 反推出来的灵敏度，单位 像素/计数
         self._gain = None              # 标定出来的倍率；没标出来之前是 None
+
+    @property
+    def px_per_count(self):
+        """标定出来的灵敏度（一个鼠标计数等于几个屏幕像素）；没标出来是 None。
+
+        跟随那边要读它：判断"不足一格的那一格会不会跨过目标"需要这个数，
+        而它只有这里知道。
+        """
+        return self._px_per_count
 
     def gain_for(self, error):
         """这一帧该用的倍率。还没标定出来就按探测帧那一套给。

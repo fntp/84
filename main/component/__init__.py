@@ -10,7 +10,7 @@
     detection_output.py  检测结果 -> JSONL / 控制台
     coord_stream.py      坐标 -> 文件（后台无窗口时的出口）
     screen.py            屏幕相关：DPI 声明 / 抓图 / region 解析 / 屏幕尺寸
-    trigger.py           右键开关：按一下开，再按一下关
+    trigger.py           右键开关：按着（开镜）就跟随，一松开就停手
     aim.py               瞄准算法：挑目标、算这一步推多少（纯计算，不碰鼠标）
     follow.py            把 aim 算出来的位移推给鼠标，同一句报错只说一次
     report.py            把一帧结果排版成给人看的文字

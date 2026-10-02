@@ -136,7 +136,7 @@ def test_gate_off_does_not_burn_the_frame_budget():
 def test_gate_reports_state_only_when_it_changes():
     """开着的时候每帧都 poll，但只在状态真的变了的时候说一句。
 
-    否则每秒十行"右键开关：开"，日志全被这句话淹了。
+    否则每秒十行"右键开关：按住（开镜），开始跟随"，日志全被这句话淹了。
     """
     said = []
     assert _drive(_args(loop=5), _Gate(True), said) == [1, 2, 3, 4, 5]
@@ -347,7 +347,7 @@ def test_status_text_shows_the_tail_of_the_log():
 
     这是"跟随到底生没生效"唯一的可见出口：默认就是后台跑，
     终端上什么都不会有。开关的开/关每次都记在日志里，
-    按了右键而这里没有"右键开关：开"，就说明那一下没被认到 ——
+    按了右键而这里没有"右键开关：按住（开镜）"，就说明那一下没被认到 ——
     这一条能把"没按到"和"按到了但没跟随"直接分开，
     而这两件事的修法完全不同。
     """

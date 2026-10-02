@@ -121,18 +121,36 @@ def test_direction_and_gain_are_applied():
 
 
 def test_one_pixel_off_still_pushes_one_count():
-    """差一个像素也要推 ±1 个计数。
+    """差一个像素也要推 ±1 个计数（在一格够小的时候）。
 
     _steps 里那个"不足一格凑成 ±1"就是为这个：游戏会把不足一格的位移丢掉，
     如果这里返回 0，准星会永远停在死区外一点点，看着就是"总也瞄不准"。
+    这里 gain=0.1 -> 一格 10 像素，差 40 像素远超过半格，该推就得推。
     """
     mov, said = _Mover(), []
     _follower(mov, said, gain=0.1).update([_t(1000, 540)])
 
-    assert mov.calls == [(4, 0)]          # 40 * 0.1 = 4，还能凑出非零
-    mov2 = _Mover()
-    _follower(mov2, [], gain=0.001).update([_t(1000, 540)])
-    assert mov2.calls == [(1, 0)]         # 0.04 -> 四舍五入成 0 -> 补成 1
+    assert mov.calls == [(4, 0)]          # 40 * 0.1 = 4
+
+
+def test_no_mouse_call_at_all_when_one_count_would_overshoot():
+    """一格太大、差得又不足半格：一个计数都不推，而且【一次鼠标都不碰】。
+
+    这是"右上角那台机器开镜之后准星一直在抖"的正面解药。gain=0.001 表示
+    一格 1000 像素，差 40 像素时凑一格会直接跨到目标另一侧 960 像素，
+    下一帧再凑一格又跨回来 —— 每帧都在目标两侧蹦，就是用户看到的抖。
+    所以这里推 0 是对的：不是"没对准"，是"推鼠标已经到极限了"。
+
+    连 mover 都不该调：一个 (0,0) 在 buke_km 那边仍然是一次真实的鼠标调用，
+    HID 模式下等于每帧发一份空报文，白费一帧，还会把 trace 的"第 N 次"
+    刷得虚高 —— 用户照着这个数会以为程序一直在动。
+    """
+    mov, said = _Mover(), []
+    _follower(mov, said, gain=0.001).update([_t(1000, 540)])
+
+    assert mov.calls == []
+    assert '不动' in said[0], said[0]
+    assert '半格' in said[0], said[0]
 
 
 def test_most_confident_target_wins():
@@ -281,6 +299,63 @@ def test_reset_keeps_the_calibration():
     # 要是 reset 把标定也清了，这一帧会退回探测帧，只推 8 个。
     assert abs(game.calls[-1][0]) > 40, (
         f'标定被 reset 一起清掉了，这一帧只推了 {game.calls[-1][0]} 个计数')
+
+
+# ----------------------------------------------------------------------
+# 六、收敛之后必须停住 —— 不能在目标两侧一直蹦（用户报的"一直在抖"）
+# ----------------------------------------------------------------------
+
+def test_it_converges_and_then_holds_still():
+    """开镜之后贴近目标，然后【停住】：剩下的那些帧一次鼠标都不该再动。
+
+    这是用户报的那个毛病的端到端回归测试。他描述的是一条完整的链：
+    "丝滑地左右移动" -> "最终稳定地落在目标坐标上" -> "然后持续跟踪"。
+    中间任何一帧多推一下，在游戏里就是准星从目标左边蹦到右边再蹦回来，
+    也就是他说的"鼠标乱晃乱抖"。
+
+    这里用 k=40 像素/计数（开镜高倍镜的常见值，也是原来抖得最厉害的区间），
+    死区调到 2 像素 —— 这样收敛后剩下的那 10 个像素残差【落在死区外】，
+    走的一定是"不足一格，不推"那条路，而不是"已经对准"那条。
+    两条路都不动鼠标，但只有这条能证明抖是被"不推"止住的，
+    而不是被死区盖住的。
+    """
+    game = _Screen(k=40.0, miss=390.0)
+    f = _follower(game, [], auto_gain=True, deadzone=2)
+
+    for _ in range(40):
+        f.update(game.frame())
+
+    assert abs(game.miss) <= 40, f'没能收敛，还差 {game.miss}'
+    moves = len(game.calls)
+    assert moves <= 6, f'推了 {moves} 下，收敛得太慢或者一直在蹦：{game.calls}'
+
+    # 关键的一半：收敛之后再跑一段，鼠标必须【一次都不动】。
+    for _ in range(30):
+        f.update(game.frame())
+
+    assert len(game.calls) == moves, (
+        f'收敛之后还在推：多了 {game.calls[moves:]}。'
+        f'游戏里看到的就是准星一直在抖')
+    assert abs(game.miss) <= 40, f'来回蹦，最后停在 {game.miss}'
+
+
+def test_short_residual_is_reported_as_not_enough_to_push():
+    """"还差一点点但不推"要说得跟"已在死区里"不一样。
+
+    两句都表现为鼠标不动，但原因完全不同：一个是已经压上了，一个是推鼠标
+    根本推不动这么细。不说清楚，用户会以为跟随卡死了，然后去乱调增益和死区。
+    """
+    game = _Screen(k=40.0, miss=390.0)
+    said = []
+    f = _follower(game, said, auto_gain=True, deadzone=2)
+
+    for _ in range(40):
+        f.update(game.frame())
+    said.clear()
+    f.update(game.frame())
+
+    assert said and '半格' in said[0], said
+    assert '死区' not in said[0], said
 
 
 # ----------------------------------------------------------------------

@@ -31,7 +31,7 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog='start.py',
         description='抓当前屏幕 -> 跑 YOLO 检测 -> 输出 person 的中心像素坐标。'
-                    '开关打开（默认鼠标右键）时，同时把鼠标朝目标方向推一点点。',
+                    '按住右键（默认，就是游戏里开镜）时，同时把鼠标朝目标方向推一点点。',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -50,7 +50,7 @@ def build_parser():
                         '不填就是整屏。输出的坐标仍然是整屏坐标')
     p.add_argument('--loop', type=int, default=DEFAULT_LOOP,
                    help='抓几帧。默认 0 = 一直监听，直到 Ctrl+C 或 --stop；'
-                        '填 N 就抓 N 帧然后自动退出。注意只统计开关打开时的帧，'
+                        '填 N 就抓 N 帧然后自动退出。注意只统计按住右键时的帧，'
                         '不按右键它就一直等着')
     p.add_argument('--interval', type=float, default=DEFAULT_INTERVAL,
                    help='一帧【至少】占多少秒，默认 0.02。不是"干完活再等这么久"：'
@@ -92,7 +92,7 @@ def build_parser():
     p.add_argument('--status', action='store_true',
                    help='看看后台进程还在不在，顺便把日志最后几行打出来，然后退出。'
                         '默认就是后台跑，屏幕上什么都不显示，判断"跟随生没生效"'
-                        '基本只能靠这里：按了右键而日志里没有"右键开关：开"，'
+                        '基本只能靠这里：按住了右键而日志里没有"右键开关：按住"，'
                         '说明那一下根本没被认到，是权限问题；有了这句却还不动，'
                         '才是跟随本身的事')
     p.add_argument('--check', action='store_true',
@@ -142,9 +142,9 @@ def parse_args(argv=None):
     if a.follow_conf < 0:
         build_parser().error('--follow-conf 不能是负数')
     if a.gain <= 0:
-        # 0 是唯一一个"看着合理其实是坏的"取值：倍率 0 时每帧只推 ±1 个计数
-        # （aim._steps 保证方向不丢），准星永远靠不拢，而且标定要等一帧
-        # 推出去的计数够大才开始工作，等不到就卡在这儿了。
+        # 0 是唯一一个"看着合理其实是坏的"取值：倍率是"像素 -> 计数"的换算，
+        # 取 0 就再也换不出计数了（而且 1/gain 这个反过来的灵敏度也除不了），
+        # 准星永远靠不拢；标定也要等推出去的计数够大才开始工作，等不到就卡死。
         build_parser().error('--gain 必须大于 0')
     if a.deadzone < 0:
         build_parser().error('--deadzone 不能是负数')
