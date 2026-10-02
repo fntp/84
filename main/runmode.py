@@ -95,9 +95,9 @@ def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL):
             say(switch_message(on))
             prev = on
         if not on:
-            # 关着的时候空转。这里必须 sleep，两个理由：
-            # 一是不然会占满一个核；二是 GetAsyncKeyState 的低位是
-            # "上次问过之后按过"，问得越密越容易漏掉两次点击之间的那一下。
+            # 关着的时候空转。这里 sleep 是为了不占满一个核。
+            # 间隔本身不影响能不能认出点击 —— 键是 trigger 的读键线程在读，
+            # 这里只是"隔多久来看一眼它翻了没有"，也就是按下之后的反应延迟。
             time.sleep(idle_interval)
             continue
         try:
@@ -172,10 +172,15 @@ def _child_cmd(a):
     必须带 --fg，否则子进程又会判断成"该转后台"，无限套娃。
 
     转发所有会影响子进程行为的参数：检测那几个（engine / region / conf /
-    iou / interval）和跟随那几个（always / follow-conf / gain / deadzone）。
+    iou / interval）和跟随那几个（always / follow-conf / gain / deadzone /
+    no-auto-gain）。
     不转发 --record / --stdout-coords / --json-coords：
     后台模式下坐标固定写进 BG_COORDS，用不上那些。
     --follow-trace 也不用转发 —— 它本身就会把进程留在前台。
+
+    漏转一个的代价：子进程拿自己的默认值跑，用户敲的那个参数在转后台那一步
+    就被丢掉了，表现是"参数填了跟没填一样"。而默认就是转后台，
+    所以只要漏了，几乎必定踩到，而且没有任何提示。
     """
     cmd = [
         _pythonw(), ENTRY,
@@ -205,6 +210,10 @@ def _child_cmd(a):
         cmd += ['--gain', str(a.gain)]
     if a.deadzone is not None:
         cmd += ['--deadzone', str(a.deadzone)]
+    # 关掉自标定是个"反向"开关：不带它 = 开着自标定。没有"带上去"的中间态，
+    # 所以只能 when True 才拼，不能照抄 --conf 那种 when not None 的写法。
+    if a.no_auto_gain:
+        cmd += ['--no-auto-gain']
     return cmd
 
 

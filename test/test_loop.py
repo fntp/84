@@ -36,13 +36,14 @@ def _args(**over):
 
     跟随那几个字段（always / follow_conf / gain / deadzone）默认都是 None，
     和 args.py 里一致 —— None 表示"用户没说"，_child_cmd 就是靠这个决定转不转发。
+    no_auto_gain 是唯一一个"False 才是默认"的跟随字段，见 _child_cmd。
     follow_trace 默认 False 但【必须在】，因为 is_foreground 要读它：
     少了这个字段整个文件都是 AttributeError，而不是某一条测试失败。
     """
     base = dict(fg=False, bg=False, loop=0, coords_file=None, record=False,
                 log=None, jsonl=None, stdout_coords=False, json_coords=False,
                 follow_trace=False, always=False, follow_conf=None, gain=None,
-                deadzone=None,
+                deadzone=None, no_auto_gain=False,
                 # 下面几个只有 _child_cmd 用得上，默认值和 args.py 一样
                 interval=0.05, engine='weights/best.engine', region=None,
                 conf=None, iou=None)
@@ -99,7 +100,7 @@ class _Gate:
 
 def _drive(a, gate, said):
     """跑一遍开关门控。idle_interval=0 是为了让测试不真的睡 ——
-    真的空转那 0.05 秒在程序里有用，在测试里纯属浪费时间。"""
+    真的空转那一下在程序里有用（等开关翻过来），在测试里纯属浪费时间。"""
     return list(runmode.gated_frames(a, gate, said.append, idle_interval=0))
 
 
@@ -216,6 +217,16 @@ def test_child_cmd_forwards_follow_flags():
         assert joined.count(f'{flag} {val}') == 1, (flag, joined)
 
 
+def test_child_cmd_forwards_no_auto_gain():
+    """--no-auto-gain 也要跟着走。
+
+    它和别的跟随参数不一样：【不转发】就是"没关"，所以漏了不会有任何报错，
+    只是子进程照样自标定 —— 用户明明加了 --no-auto-gain，行为却当没加。
+    默认又是走后台，所以这个漏法几乎必然发生，而且没人会注意到。
+    """
+    assert '--no-auto-gain' in runmode._child_cmd(_args(no_auto_gain=True))
+
+
 def test_child_cmd_omits_follow_flags_nobody_set():
     """用户没填的跟随参数不要转发。
 
@@ -224,7 +235,7 @@ def test_child_cmd_omits_follow_flags_nobody_set():
     """
     cmd = runmode._child_cmd(_args())
     assert '--always' not in cmd
-    for flag in ('--follow-conf', '--gain', '--deadzone'):
+    for flag in ('--follow-conf', '--gain', '--deadzone', '--no-auto-gain'):
         assert flag not in cmd
 
 
