@@ -10,60 +10,38 @@
 游戏设置：窗口化跑（你现在就是 1920x1080 窗口化，不用改）。
 不要用独占全屏 —— 独占全屏下这个工具抓不到画面。
 
-当前症状：按住右键之后准星绕着目标转圈，贴不上去。
-抓屏已经好了（控制台不再刷 [DDA] DuplicateOutput failed），问题在瞄准倍率：
-每帧该转多少角度，是拿 config.ini 里的 fovX/fovY 和 [Games] 里那组标定值
-算出来的。这几个数跟你的游戏对不上，再叠上"预测 + 卡尔曼"，就会从
-"贴不准"变成"一直绕圈"。所以先关掉预测和卡尔曼、把速度压到 0.2，
-看它能不能变成"慢慢贴上去"。
+当前进度：抓屏已经好了（控制台不再刷 [DDA] DuplicateOutput failed），
+预测和卡尔曼也已经关掉了。现在准星贴着目标时还是一会儿往左上跳、
+一会儿往右上跳，跳得很快 —— 这是"每帧推出去的鼠标量太大"，
+一下跨过了目标，下一帧又从对面跨回来，看起来就是左右来回蹦。
+
+所以现在要做的事只有一件：把倍率再往下压。先压到 0.05。
+
+调倍率的规矩（来回试几次就到了）：
+  还跳得很快  → 再降 ：0.05 → 0.02
+  变成慢慢爬过去、贴上就不动 → 方向对了，再往上提：0.02 → 0.05 → 0.1 → 0.2
+  提到刚好快要冲过头，就退回去一档，那就是这台机器/这个游戏合适的量。
 
 
----- 1. 关掉 ai.exe -------------------------------------------------
+---- 1. 改倍率（PowerShell 里整行复制粘贴，回车） -------------------
 
-   点它那个黑窗口，按 Ctrl+C。
-   关不掉就直接点窗口右上角的 X。
+   两个 0.05 就是你要的倍率，改数值就改这两处。
 
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; (Get-Content $p) -replace '^\s*minSpeedMultiplier\s*=.*','minSpeedMultiplier = 0.05' -replace '^\s*maxSpeedMultiplier\s*=.*','maxSpeedMultiplier = 0.05' | Set-Content $p; Get-Content $p|Select-String 'SpeedMultiplier'
 
----- 2. 改 config.ini（PowerShell 里整块复制粘贴，回车） -----------
+   跑完打印两行，确认一下：
 
-cd F:\aifz\ai_5.0.3_CUDA
-Copy-Item .\config.ini .\config.ini.bak -Force
-$set = @{'predictionInterval'='0'; 'kalman_enabled'='false'; 'minSpeedMultiplier'='0.2'; 'maxSpeedMultiplier'='0.2'; 'fovX'='90'; 'fovY'='60'}
-$lines = Get-Content .\config.ini
-foreach ($k in $set.Keys) {
-  $found = $false
-  $lines = $lines | ForEach-Object { if ($_ -match "^\s*$([regex]::Escape($k))\s*=") { $found = $true; "$k = $($set[$k])" } else { $_ } }
-  if (-not $found) { $lines += "$k = $($set[$k])" }
-}
-$lines | Set-Content .\config.ini
-Get-Content .\config.ini | Select-String -Pattern 'fovX|fovY|SpeedMultiplier|prediction|kalman'
+     minSpeedMultiplier = 0.05
+     maxSpeedMultiplier = 0.05
 
-   跑完最后会打印 6 行，对一下：
-
-     fovX = 90
-     fovY = 60
-     minSpeedMultiplier = 0.2
-     maxSpeedMultiplier = 0.2
-     predictionInterval = 0
-     kalman_enabled = false
-
-   每一行改的是什么：
-
-     predictionInterval = 0      关掉"预测目标下一帧在哪"。
-     kalman_enabled = false      关掉卡尔曼滤波。
-                                 这两项都是靠估计目标的运动速度去提前量，
-                                 标定不对的时候，它们会把绕圈放大成一直转。
-                                 先关掉，确认能贴上去，再一个一个开回来。
-     minSpeedMultiplier = 0.2    每帧真正推出去的鼠标量 = 算出来的量 × 这个系数。
-     maxSpeedMultiplier = 0.2    太小贴不上，太大冲过头，先固定成 0.2 试。
-     fovX = 90 / fovY = 60       游戏的水平 / 垂直视野。
-                                 默认的 106 / 74 是 CS 系的值，先按 90 / 60 试。
-                                 你游戏里 FOV 填的是多少，这里就改成多少。
-
-   改坏了不要紧：config.ini.bak 是改之前的那一份，覆盖回去就还原了。
+   这两个是"每帧真正推出去的鼠标量 = 算出来的量 × 这个系数"。
+   两个值填成一样，是为了让倍率固定，不随离目标远近变 —— 调起来才准。
 
 
----- 3. 启动 -------------------------------------------------------
+---- 2. 让新配置生效 -----------------------------------------------
+
+   ai.exe 还在跑的话，按一下键盘上的 F4（重载配置），不用重启。
+   不放心就关掉重开：
 
 cd F:\aifz\ai_5.0.3_CUDA
 .\ai.exe
@@ -72,36 +50,52 @@ cd F:\aifz\ai_5.0.3_CUDA
    控制台里不应该再出现 [DDA] DuplicateOutput failed。
 
 
----- 4. 进游戏试 ---------------------------------------------------
+---- 3. 进游戏试 ---------------------------------------------------
 
    进游戏，找个敌人，准星对着他，按住鼠标右键别松，看准星怎么走。
 
-   三种结果，分别说明：
-
      · 慢慢贴上去、贴上就不动了
-         → 方向和倍率对了。接着回去调手感：速度 0.2 太慢就往 0.3、0.4 提。
+         → 对了。回第 1 步把 0.05 往上提一档（0.1），再试；
+           提到刚要冲过头就退回去，那个值就是这台机器的上限。
      · 冲过头再飞回来、来回蹦
-         → 倍率还是偏大：fovX / fovY 往小调，或者把 Game Profile 里的
-           Sensitivity 往大调（这个值是除下去的，调大 = 每次推得更少）。
-     · 还在绕圈
-         → 把第 5 步那几件事发我，我按你的游戏算该填多少。
+         → 还是偏大。回第 1 步把两个 0.05 改成 0.02，再试。
+     · 还在原地绕圈、或者完全不动
+         → 把第 4 步那几件事发我，我按你的游戏算该填多少。
 
 
----- 5. 回报 -------------------------------------------------------
+---- 4. 回报 -------------------------------------------------------
 
-   回来告诉我四件事：
+   回来告诉我这几件事：
 
-     1. 还绕圈吗？
-     2. 是慢慢贴、冲过头、还是完全不动？
-     3. 什么游戏？游戏里 FOV 填的多少？鼠标 DPI 和游戏内灵敏度各是多少？
-     4. Mouse → Input Method 里现在选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
+     1. 现在是什么现象？慢慢贴 / 来回蹦 / 绕圈 / 完全不动？
+     2. 倍率填的是多少（0.05 还是 0.02）？
+     3. 什么游戏？游戏内灵敏度多少？（不知道灵敏度就说 cm/360）
+     4. 鼠标 DPI 多少？
+     5. Mouse → Input Method 里现在选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
+
+   第 3、4 项是关键：SunOne 里真正决定"1 个鼠标计数游戏转多少度"的，
+   是 config.ini 里 [Games] 那一行的 yaw / pitch，默认 0.022 是 CS 的值，
+   跟你游戏多半差好几倍。有了游戏名 + 灵敏度 + DPI，我可以直接算出该填的数，
+   比一档一档试着调准得多。
 
 
----- 附：悬浮窗怎么开 ---------------------------------------------
+---- 附一：悬浮窗怎么开 ---------------------------------------------
 
    悬浮窗（就是改参数的图形窗口）是 ai.exe 起来之后，按键盘上的 Home 键。
 
    不是 Windows 键。Home 一般在方向键上方那一排（Ins / Del / Home / End /
    PgUp / PgDn 六个键里的一个）；笔记本上没有独立 Home 键的话按 Fn + Home。
 
-   上面第 2 步是直接改文件，不开悬浮窗也一样能改。
+   上面第 1 步是直接改文件，不开悬浮窗也一样能改。
+
+
+---- 附二：还原 / 查当前配置 ----------------------------------------
+
+   整份配置还原（如果一开始备份过）：
+
+cd F:\aifz\ai_5.0.3_CUDA
+Copy-Item .\config.ini.bak .\config.ini -Force
+
+   看现在这几个值是多少：
+
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|prediction|kalman|active_game|^\[Games\]|^\S+\s*=\s*\d+\.?\d*,\d'
