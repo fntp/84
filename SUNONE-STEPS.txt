@@ -94,7 +94,8 @@ cd F:\aifz\ai_5.0.3_CUDA
 ---- 4. 不跳了，但瞄准点还差一点点偏上 / 偏下 -----------------------
 
    这是"瞄准点落在目标哪个位置"的问题，跟倍率、外推都没关系。
-   悬浮窗（Home 键）→ Offsets 那一栏有两个滑块：
+   悬浮窗（热键默认是 Home；键盘上没 Home 键的先照"附一"改成 F8）
+   → Offsets 那一栏有两个滑块：
 
      Approximate Head Y Offset    默认 0.05    ← 打头用这个
      Approximate Body Y Offset    默认 0.15    ← 打身子用这个
@@ -171,12 +172,35 @@ cd F:\aifz\ai_5.0.3_CUDA
 
 ---- 附一：悬浮窗怎么开 ---------------------------------------------
 
-   悬浮窗（改参数的图形窗口）是 ai.exe 起来之后，按键盘上的 Home 键。
+   悬浮窗（改参数的图形窗口）**默认是关着的**，要按热键才出来。
+   这个热键写在 config.ini 里，叫 button_open_overlay，出厂值是 Home。
 
-   不是 Windows 键。Home 一般在方向键上方那一排（Ins / Del / Home / End /
-   PgUp / PgDn 六个键里的一个）；笔记本上没有独立 Home 键的话按 Fn + Home。
+   键盘上没有 Home 键（笔记本多半没有）→ 把热键换成 F8：
 
-   上面第 1 步是直接改文件，不开悬浮窗也一样能改。
+   $p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+   Copy-Item $p "$p.bak4" -Force
+   $t = [IO.File]::ReadAllText($p)
+   $re = '(?m)^\s*button_open_overlay\s*=.*$'
+   $line = 'button_open_overlay = F8'
+   if($t -match $re){ $t = $t -replace $re, $line }
+   else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+   [IO.File]::WriteAllText($p, $t)
+   Get-Content $p | Select-String 'button_open_overlay'
+
+   打印出 button_open_overlay = F8 就对了（备份在 config.ini.bak4）。
+   然后回 ai.exe 那个黑窗口按一下 F4（重载配置），再按 F8 —— 悬浮窗就出来。
+   不放心就关掉 ai.exe 重开。悬浮窗是个左上角的小窗口，出来时在最前，
+   可以拖到一边，改完参数不用关它。
+
+   （有 Home 键的话不用改，直接按 Home；Home 一般在方向键上方那一排
+   Ins / Del / Home / End / PgUp / PgDn 六个键里，笔记本没有独立 Home
+   键的话是 Fn + Home。）
+
+   实在不想开悬浮窗也行：要改的每个数值都能直接改 config.ini，改完按 F4 生效
+   —— 只是不能边瞄边看效果。例：把打头的瞄准点往下挪一档（head_y_offset
+   0.05 → 0.10）：
+
+   $p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Copy-Item $p "$p.bak5" -Force; $t=[IO.File]::ReadAllText($p); $line='head_y_offset = 0.10'; if($t -match '(?m)^\s*head_y_offset\s*=.*$'){$t=$t -replace '(?m)^\s*head_y_offset\s*=.*$',$line}else{$i=$t.IndexOf("`n["); if($i -lt 0){$t=$t.TrimEnd()+"`r`n"+$line}else{$t=$t.Insert($i+1,$line+"`r`n")}}; [IO.File]::WriteAllText($p,$t); Get-Content $p|Select-String 'head_y_offset'
 
 
 ---- 附二：还原 / 查当前配置 ----------------------------------------
