@@ -10,32 +10,60 @@
 游戏设置：窗口化跑（你现在就是 1920x1080 窗口化，不用改）。
 不要用独占全屏 —— 独占全屏下这个工具抓不到画面。
 
-当前进度：抓屏已经好了（控制台不再刷 [DDA] DuplicateOutput failed），
-预测和卡尔曼也已经关掉了。现在准星贴着目标时还是一会儿往左上跳、
-一会儿往右上跳，跳得很快 —— 这是"每帧推出去的鼠标量太大"，
-一下跨过了目标，下一帧又从对面跨回来，看起来就是左右来回蹦。
 
-所以现在要做的事只有一件：把倍率再往下压。先压到 0.05。
+---- 现在卡在哪 -----------------------------------------------------
 
-调倍率的规矩（来回试几次就到了）：
-  还跳得很快  → 再降 ：0.05 → 0.02
-  变成慢慢爬过去、贴上就不动 → 方向对了，再往上提：0.02 → 0.05 → 0.1 → 0.2
-  提到刚好快要冲过头，就退回去一档，那就是这台机器/这个游戏合适的量。
+症状：准星对着人头时，一会儿往左上跳、一会儿往右上跳，跳得非常快；
+倍率压到 0.05 只是把跳的幅度压小了，跳的频率一点没变。
+
+原因（读了源码，不是猜的）：
+
+   这个工具每帧都会拿"上一帧到这一帧目标挪了多少"往前外推一段，
+   外推的时间 = predictionInterval + 检测延迟补偿 + 额外预测。
+
+   卡尔曼关掉之后，"挪了多少"就不再是滤波后的速度，而是
+   **两帧检测框之间的原始抖动**；而画面那一帧到鼠标真正动之间隔着
+   20~50ms，于是每帧都拿这个抖动往前推 20~50ms 的位置。
+   下一帧抖动反号，目标点就跳到另一边 —— 表现出来就是"很快地左右来回跳"。
+   跳多远由倍率决定，跳的频率是帧率决定的，所以降倍率只会让幅度变小。
+
+要做的是把外推时间彻底变成 0。就差最后这一处：
+kalman_compensate_detection_delay（检测延迟补偿），默认是 true。
+它一关，lookahead 就是 0，predict() 直接返回当前位置，跳就没了。
+
+   （源码位置，供核对：
+     include/aim_kalman.h   predict()  —— lookahead <= 0 时直接 return position()
+     mouse/mouse.cpp        currentPredictionLookaheadSec() —— 把检测延迟加进 lookahead
+                            currentDetectionDelaySec()      —— 检测延迟 = 这一帧的年龄
+     mouse/mouse.cpp        moveMousePivot() 用的是 predict_target_position() 的返回值）
 
 
----- 1. 改倍率（PowerShell 里整行复制粘贴，回车） -------------------
+---- 1. 关掉这处外推（PowerShell 整段复制粘贴，回车） ---------------
 
-   两个 0.05 就是你要的倍率，改数值就改这两处。
+   $p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+   Copy-Item $p "$p.bak3" -Force
+   $t = [IO.File]::ReadAllText($p)
+   $set = @{'predictionInterval'='0';'kalman_compensate_detection_delay'='false';'kalman_additional_prediction_ms'='0'}
+   foreach($k in @($set.Keys)){
+     $line = "$k = $($set[$k])"
+     $re = '(?m)^\s*' + [regex]::Escape($k) + '\s*=.*$'
+     if($t -match $re){ $t = $t -replace $re, $line }
+     else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+   }
+   [IO.File]::WriteAllText($p, $t)
+   Get-Content $p | Select-String 'predictionInterval|kalman_compensate_detection_delay|kalman_additional|kalman_enabled|minSpeedMultiplier|maxSpeedMultiplier'
 
-$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; (Get-Content $p) -replace '^\s*minSpeedMultiplier\s*=.*','minSpeedMultiplier = 0.05' -replace '^\s*maxSpeedMultiplier\s*=.*','maxSpeedMultiplier = 0.05' | Set-Content $p; Get-Content $p|Select-String 'SpeedMultiplier'
+   跑完会打印几行，确认这三行是：
 
-   跑完打印两行，确认一下：
+     predictionInterval = 0
+     kalman_compensate_detection_delay = false
+     kalman_additional_prediction_ms = 0
 
-     minSpeedMultiplier = 0.05
-     maxSpeedMultiplier = 0.05
+   如果打印出来本来就是这样，那就说明问题只在
+   kalman_compensate_detection_delay 这一行 —— 它原来是 true。
 
-   这两个是"每帧真正推出去的鼠标量 = 算出来的量 × 这个系数"。
-   两个值填成一样，是为了让倍率固定，不随离目标远近变 —— 调起来才准。
+   备份在 config.ini.bak3，改坏了还原：
+     Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak3 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
 
 
 ---- 2. 让新配置生效 -----------------------------------------------
@@ -52,36 +80,71 @@ cd F:\aifz\ai_5.0.3_CUDA
 
 ---- 3. 进游戏试 ---------------------------------------------------
 
-   进游戏，找个敌人，准星对着他，按住鼠标右键别松，看准星怎么走。
+   按住右键、准星对着敌人，看准星怎么走：
 
-     · 慢慢贴上去、贴上就不动了
-         → 对了。回第 1 步把 0.05 往上提一档（0.1），再试；
-           提到刚要冲过头就退回去，那个值就是这台机器的上限。
-     · 冲过头再飞回来、来回蹦
-         → 还是偏大。回第 1 步把两个 0.05 改成 0.02，再试。
-     · 还在原地绕圈、或者完全不动
-         → 把第 4 步那几件事发我，我按你的游戏算该填多少。
+   · 不再左右甩了（可能还有点小抖，但不再是"往左一下往右一下"）
+       → 对了，这就是根因。接着做第 4 步。
+   · 还是很快地左右跳
+       → 打开悬浮窗（Home 键），把 Mouse 页里的
+         “Enable Kalman Filter”勾上再试一次。
+         卡尔曼开着 + 外推为 0 是"只平滑、不往前猜"，是这种跳法的克星。
+         还是跳就做第 6 步的回报。
 
 
----- 4. 回报 -------------------------------------------------------
+---- 4. 不蹦了之后：把倍率提上来 ------------------------------------
+
+   之前被迫用 0.05，很大原因就是这个抖 —— 倍率一大，抖动被放大成"跳"。
+   现在一档一档往上提：
+
+       0.05 → 0.1 → 0.2 → 0.3
+
+   每档进游戏试：
+
+   · 贴上去稳、不甩         → 再往上提一档，直到刚要冲过头就退回来
+   · 慢慢爬、贴不上、跟不上移动的目标 → 太小了，往上提
+   · 某一档又开始"很快地左右跳"       → 退回低一档先用着，做第 5 步
+
+   改倍率的命令（两个数填一样，让倍率固定、不随远近变）：
+
+   $p='F:\aifz\ai_5.0.3_CUDA\config.ini'; (Get-Content $p) -replace '^\s*minSpeedMultiplier\s*=.*','minSpeedMultiplier = 0.1' -replace '^\s*maxSpeedMultiplier\s*=.*','maxSpeedMultiplier = 0.1' | Set-Content $p; Get-Content $p|Select-String 'SpeedMultiplier'
+
+
+---- 5. 只有"怎么调都偏一点"时，才动 [Games] ------------------------
+
+   先别动这一步，把第 6 步的回报发我。
+
+   SunOne 认为"1 个鼠标计数 = 游戏转多少度"，写在 config.ini 的 [Games] 里：
+
+     UNIFIED = 1,0.022,0.022        ← 名字 = 灵敏度, yaw, pitch
+
+   0.022 是 CS 的标定值，跟别的游戏差好几倍。它同时决定两件事：
+   算"该推多少鼠标"，以及"我自己刚才的移动把画面挪了多少"的自我补偿。
+   标定对不上时，补偿会多补/少补 —— 表现就是：怎么调倍率都偏一点，
+   或者倍率一提就抖。真要改就是 yaw/pitch 乘几倍、倍率同时乘几倍
+   （保持手感不变），具体数值我按你的游戏和 DPI 给你算，比一档档试快。
+
+   把 [Games] 那几行发我用这条命令：
+
+   $p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p | Select-String '^active_game|^\[Games\]' -Context 0,6
+
+
+---- 6. 回报 -------------------------------------------------------
 
    回来告诉我这几件事：
 
-     1. 现在是什么现象？慢慢贴 / 来回蹦 / 绕圈 / 完全不动？
-     2. 倍率填的是多少（0.05 还是 0.02）？
+     1. 现在是哪种现象？左右甩 / 有点小抖 / 慢慢贴上去 / 跟不上移动目标？
+     2. 倍率现在填的是多少？
      3. 什么游戏？游戏内灵敏度多少？（不知道灵敏度就说 cm/360）
      4. 鼠标 DPI 多少？
-     5. Mouse → Input Method 里现在选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
+     5. Mouse → Input Method 里选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
+     6. 第 5 步那条命令打印出来的 [Games] 那几行。
 
-   第 3、4 项是关键：SunOne 里真正决定"1 个鼠标计数游戏转多少度"的，
-   是 config.ini 里 [Games] 那一行的 yaw / pitch，默认 0.022 是 CS 的值，
-   跟你游戏多半差好几倍。有了游戏名 + 灵敏度 + DPI，我可以直接算出该填的数，
-   比一档一档试着调准得多。
+   第 3、4 项是关键：有了游戏名 + 灵敏度 + DPI，我能直接算出 [Games] 该填多少。
 
 
 ---- 附一：悬浮窗怎么开 ---------------------------------------------
 
-   悬浮窗（就是改参数的图形窗口）是 ai.exe 起来之后，按键盘上的 Home 键。
+   悬浮窗（改参数的图形窗口）是 ai.exe 起来之后，按键盘上的 Home 键。
 
    不是 Windows 键。Home 一般在方向键上方那一排（Ins / Del / Home / End /
    PgUp / PgDn 六个键里的一个）；笔记本上没有独立 Home 键的话按 Fn + Home。
