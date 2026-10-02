@@ -2,6 +2,8 @@
 """跟随执行：把 aim 算出来的相对位移真的推给鼠标，并管好出错时的嘴。
 
 aim.py 只管算，不碰鼠标；app.py 管主循环。中间这一层负责：
+    0. 记住上一帧推了多少、误差变成了多少，交给 aim.GainTuner 去标定增益
+       （不标的话，用户填的那个倍率不对就是"准星一格一格慢慢滑过去"）
     1. 每帧按算出来的位移调一次鼠标
     2. 出错时【只说一次】—— 每帧都报错的话会把 out\\bg.log 刷成几万行，
        真正有用的那几行就被埋了（现在的 bg.log 就是这么被刷爆的）
@@ -21,31 +23,51 @@ class Follower:
     """每帧调一次 update()，它自己知道该不该动、动多少。"""
 
     def __init__(self, mover, crosshair, min_confidence, gain, deadzone,
-                 trace=None):
+                 trace=None, auto_gain=True):
         """参数：
 
         mover            move_relative 那类函数，收 (dx, dy)，单位是鼠标计数
         crosshair        (cx, cy)，准星的屏幕绝对坐标，一般是屏幕正中心
         min_confidence   跟随的最低置信度
-        gain             像素差 -> 鼠标计数的倍率
+        gain             像素差 -> 鼠标计数的倍率。auto_gain 打开时这只是【起点】，
+                         之后由 GainTuner 按每帧实测结果自己改
         deadzone         死区半径（像素）
         trace            可选的回调（就是 say），收一句话。给了就每帧汇报判定过程；
                          不给（默认）时和以前完全一样，一个字都不多打。
+        auto_gain        要不要自己标定增益。见 aim.GainTuner 的说明 ——
+                         开着时第一帧会先"探"一下（倍率取得很小、推出去的计数
+                         也封了顶，所以只会逼近、不会甩过目标），从第二帧起
+                         每帧消掉七成误差，两三帧就贴上。关掉就是老行为：
+                         整场都用 gain 这一个值，一格一格慢慢磨过去。
         """
         self._mover = mover
         self._crosshair = crosshair
         self._min_confidence = min_confidence
         self._gain = gain
+        self._tuner = aim.GainTuner() if auto_gain else None
         self._deadzone = deadzone
         self._trace = trace
         self._last_msg = None
         self._moves = 0        # 累计真的推了鼠标多少次
+        self._last = None      # 上一帧推出去的 (计数, 推之前的误差)，给标定用
 
     def update(self, targets):
         """处理这一帧。返回要转告用户的一句话；没什么新鲜的就返回 None。"""
         best = aim.pick_best(targets, self._min_confidence)
-        step = None if best is None else aim.plan_relative_move(
-            best, self._crosshair, self._gain, self._deadzone)
+        step = None
+
+        if best is None:
+            # 目标丢了，上一帧那笔"推完误差变成多少"就无从比对了，作废。
+            self._last = None
+        else:
+            error = (best['x'] - self._crosshair[0],
+                     best['y'] - self._crosshair[1])
+            self._learn(error)
+            step = aim.plan_relative_move(
+                best, self._crosshair, self._gain_now(error), self._deadzone)
+            # 记的是【推之前】的误差；下一帧重测到的误差才是结果。
+            # 已经在死区里（step 为 None）没推，就没得比，也清掉。
+            self._last = None if step is None else (step, error)
 
         if self._trace:
             self._trace(self._describe(targets, best, step))
@@ -64,6 +86,26 @@ class Follower:
         self._moves += 1
         self._last_msg = None
         return None
+
+    def _gain_now(self, error):
+        """这一帧该用的倍率。开了自标定就交给 GainTuner，否则是用户填的那个。
+
+        标定还没做出来的第一帧，倍率取决于误差有多大（探测帧要限制的是
+        推出去的计数），所以 error 得传进去。
+        """
+        if self._tuner is None:
+            return self._gain
+        return self._tuner.gain_for(error)
+
+    def _learn(self, error):
+        """拿上一帧的结果修正倍率：上一帧推了 step、误差从 prev 变成 error。
+
+        只在上一帧真的推过鼠标时才有可比的对象 —— 死区里不动、或者刚丢过
+        目标的那一帧，都没有"推完变成多少"这件事。
+        """
+        if self._tuner is None or self._last is None:
+            return
+        self._tuner.observe(self._last[0], self._last[1], error)
 
     def _describe(self, targets, best, step):
         """这一帧的判定过程，一句话说完。

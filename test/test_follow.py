@@ -43,8 +43,11 @@ class _Mover:
 
 
 def _follower(mover, said, **over):
+    # auto_gain 默认关着：本文件钉的是"固定倍率"这条路径（= --no-auto-gain
+    # 走的那条），推几个计数能直接按 gain 算出来，断言才有意义。
+    # 默认走的自动标定那条路径在 test_gain.py 里单独测。
     kw = dict(crosshair=CROSSHAIR, min_confidence=0.6, gain=0.5, deadzone=12,
-              trace=said.append)
+              trace=said.append, auto_gain=False)
     kw.update(over)
     return Follower(mover, **kw)
 

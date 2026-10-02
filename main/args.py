@@ -53,7 +53,9 @@ def build_parser():
                         '填 N 就抓 N 帧然后自动退出。注意只统计开关打开时的帧，'
                         '不按右键它就一直等着')
     p.add_argument('--interval', type=float, default=DEFAULT_INTERVAL,
-                   help='多帧之间的间隔，单位秒。默认 0.1 秒，约每秒 10 次')
+                   help='一帧【至少】占多少秒，默认 0.02。不是"干完活再等这么久"：'
+                        '抓屏加推理本身就要几十毫秒，设得比它还小就是全速跑，'
+                        '这才是跟随该有的速度；调大只会让准星追得更慢')
 
     # ---- 跟随瞄准 ----
     p.add_argument('--always', action='store_true',
@@ -63,8 +65,14 @@ def build_parser():
                    help='跟随的最低置信度。比 --conf 高得多，宁可漏瞄也别瞄错人；'
                         '填 0 表示不设门槛')
     p.add_argument('--gain', type=float, default=AIM_GAIN,
-                   help='跟随增益：屏幕像素差 -> 鼠标计数。调大追得猛、容易过冲，'
-                        '调小追得平滑。只影响手感，每帧都在重新算，都能对准')
+                   help='跟随增益（像素差 -> 鼠标计数），默认 0.5。'
+                        '默认情况下这个值只是【起点】：程序会按每帧实测结果自己'
+                        '把它标定到这台机器/这个游戏的灵敏度上（见 --no-auto-gain），'
+                        '所以一般不用调')
+    p.add_argument('--no-auto-gain', action='store_true',
+                   help='关掉增益自动标定，整场都用 --gain 那一个固定倍率（老行为）。'
+                        '只有在自动标定明显不对劲时才用 —— 关掉之后收敛快慢完全由 '
+                        '--gain 决定，填小了就是准星一格一格慢慢滑过去')
     p.add_argument('--deadzone', type=int, default=AIM_DEADZONE,
                    help='死区半径（像素）。目标离准星这么近就不动鼠标了，'
                         '免得准星跟着检测框一起抖')
@@ -133,8 +141,11 @@ def parse_args(argv=None):
         build_parser().error('--interval 不能是负数')
     if a.follow_conf < 0:
         build_parser().error('--follow-conf 不能是负数')
-    if a.gain < 0:
-        build_parser().error('--gain 不能是负数')
+    if a.gain <= 0:
+        # 0 是唯一一个"看着合理其实是坏的"取值：倍率 0 时每帧只推 ±1 个计数
+        # （aim._steps 保证方向不丢），准星永远靠不拢，而且标定要等一帧
+        # 推出去的计数够大才开始工作，等不到就卡在这儿了。
+        build_parser().error('--gain 必须大于 0')
     if a.deadzone < 0:
         build_parser().error('--deadzone 不能是负数')
 

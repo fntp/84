@@ -131,9 +131,9 @@ def _print_banner(say, a, det, coords_mode, gate, follower):
     say(f'engine  {os.path.basename(a.engine)}  {det.describe()}')
     say(f'抓屏区域  {a.region if a.region else "整屏"}')
     if a.loop > 0:
-        say(f'帧数/间隔  {a.loop} 帧 / {a.interval} 秒')
+        say(f'帧数/间隔  {a.loop} 帧 / 每帧至少 {a.interval} 秒')
     else:
-        say(f'一直监听  每帧间隔 {a.interval} 秒，Ctrl+C 停止')
+        say(f'一直监听  每帧至少 {a.interval} 秒（干完活就进下一帧），Ctrl+C 停止')
     if coords_mode:
         if a.coords_file:
             say(f'坐标文件  {a.coords_file}（一行一帧，每行一个 JSON 数组）')
@@ -148,8 +148,10 @@ def _print_banner(say, a, det, coords_mode, gate, follower):
     else:
         say('跟随开关  鼠标右键：第一次按开始跟随，再按一次停手')
         say('          关着的时候不抓屏、不检测、也不动鼠标')
-        say(f'跟随方式  从准星朝目标推（增益 {a.gain} 死区 {a.deadzone} 像素，'
-            f'最低置信度 {a.follow_conf}）')
+        gain = (f'{a.gain}（自动标定中）' if not a.no_auto_gain
+                else f'{a.gain}（固定，--no-auto-gain）')
+        say(f'跟随方式  从准星朝目标推（增益 {gain} '
+            f'死区 {a.deadzone} 像素，最低置信度 {a.follow_conf}）')
 
     if follower is not None and a.follow_trace:
         say('逐帧判定  开（--follow-trace，每帧一句"跟随 ..."）')
@@ -220,6 +222,10 @@ def _build_follow(a, say):
         min_confidence=a.follow_conf,
         gain=a.gain,
         deadzone=a.deadzone,
+        # 默认自动标定增益，--gain 只当起点。不标定的话，用户填的倍率跟这个
+        # 游戏的实际灵敏度对不上时，准星就是一格一格慢慢滑过去 —— 而灵敏度
+        # 是多少只有游戏自己知道，猜不出一个通用值。--no-auto-gain 退回老行为。
+        auto_gain=not a.no_auto_gain,
         # --follow-trace 时把每帧判定过程说给用户听。
         # 不加就是 None，Follower 里连字符串都不拼。
         trace=say if a.follow_trace else None,
@@ -359,7 +365,14 @@ def _run_frames(a, det, out, log, coords, coords_mode, say, gate, follower):
 
             # 一直监听时每帧都等；指定帧数时最后一帧不用等
             if continuous or i < a.loop:
-                time.sleep(max(0.0, a.interval))
+                # --interval 是【一帧至少占多久】，不是"干完活再等这么久"。
+                # 抓屏加推理本来就要几十毫秒，再无条件睡满一个间隔的话，
+                # 帧率只有 1/(耗时+间隔)，准星就是一格一格慢慢滑过去 ——
+                # 用户要的是开镜就贴上。所以这里只补剩下的那点时间：
+                # 活干得比间隔久就一秒不等，直接进下一帧（全速）。
+                spent = time.perf_counter() - t0
+                if spent < a.interval:
+                    time.sleep(a.interval - spent)
     except KeyboardInterrupt:
         say('\n收到 Ctrl+C，已停止监听。')
 

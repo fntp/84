@@ -138,6 +138,40 @@ def test_stuck_low_bit_then_release_then_press_still_counts():
     assert [t.poll() for _ in range(6)] == [False, True, True, True, False, False]
 
 
+def _presses(n, press_state):
+    """读键流：0 起头，然后 n 组"按下 + 松开"。"""
+    seq = [0]
+    for _ in range(n):
+        seq += [press_state, 0]
+    return seq
+
+
+def test_pressing_it_again_and_again_keeps_working():
+    """点 N 下就该翻 N 次（N = 1..12）—— 第 N 下和第 1 下走的是同一段代码。
+
+    用户的原话是"我右键可能点无数次"，所以"一两下有效、点到第三第四下就失灵"
+    这种事不能有。三段读键流都试：只有低位（点击快到整段夹在两帧之间）、
+    只有高位（正常按着不放）、两个位都有（按住期间低位常亮那种机器）。
+    中间任何一下漏了或者翻了两次，后面整串对不上，这里立刻报出来。
+    """
+    for press_state in (trigger.PRESSED, trigger.DOWN,
+                        trigger.DOWN | trigger.PRESSED):
+        for n in range(1, 13):
+            t = _toggle(*_presses(n, press_state))
+
+            seen = [t.poll()]                    # 还没按，先看一眼
+            assert seen[0] is False, (n, press_state)
+
+            want = [False]
+            for k in range(1, n + 1):
+                want += [k % 2 == 1, k % 2 == 1]  # 按下翻过去，松手保持
+            for _ in range(2 * n):
+                seen.append(t.poll())
+
+            assert seen == want, (n, press_state)
+            assert t.on is (n % 2 == 1), (n, press_state)
+
+
 # ----------------------------------------------------------------------
 # 三、读键线程：点击不该跟着主循环的帧率走
 # ----------------------------------------------------------------------

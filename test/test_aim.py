@@ -139,8 +139,13 @@ class _Recorder:
             raise self.error
 
 
-def _follower(mover, crosshair=(800, 600), conf=0.6, gain=1.0, deadzone=12):
-    return follow.Follower(mover, crosshair, conf, gain, deadzone)
+def _follower(mover, crosshair=(800, 600), conf=0.6, gain=1.0, deadzone=12,
+              auto_gain=False):
+    # auto_gain 默认关着：这一组测的是"固定倍率 + 报错去重"这条老路径，
+    # 也就是 --no-auto-gain 走的那条，推出来的量能直接按 gain 算。
+    # 自动标定那条路径（默认走的）在 test_gain.py 里单独测。
+    return follow.Follower(mover, crosshair, conf, gain, deadzone,
+                           auto_gain=auto_gain)
 
 
 def test_follower_moves_towards_target():
