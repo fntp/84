@@ -71,7 +71,7 @@ def switch_message(on):
     return '右键开关：开，开始跟随' if on else '右键开关：关，已停手'
 
 
-def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL):
+def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL, on_open=None):
     """带开关的帧号生成器：开关关着的时候，一个帧号都不发。
 
     为什么做成生成器，而不是在主循环里 if 一下跳过这一帧：
@@ -82,6 +82,13 @@ def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL):
         "主循环干不干活"合成同一件事，主循环那边一行都不用改。
 
     gate 为 None（--always）时直接转交 frame_numbers，行为跟没有开关时一样。
+
+    on_open 是"开关从关翻到开"那一刻的回调，默认没有。
+    现在接的是 Follower.reset()：关着的那段时间一帧都没有，跟随器手里那笔
+    "上一帧推了多少、误差变成多少"的配对会一直停在上一次跟随的最后一帧上，
+    再开镜时第一帧拿它去跟新误差比，配的不是同一件事 —— 反推出来的灵敏度
+    可以错得离谱，第一下就把准星甩出去。这里正是唯一能看见那个上升沿的地方
+    （跟随器自己只看得见帧，看不见开关）。
     """
     counter = iter(frame_numbers(a.loop))
     if gate is None:
@@ -93,6 +100,8 @@ def gated_frames(a, gate, say, idle_interval=IDLE_INTERVAL):
         on = gate.poll()
         if on != prev:
             say(switch_message(on))
+            if on and on_open is not None:
+                on_open()
             prev = on
         if not on:
             # 关着的时候空转。这里 sleep 是为了不占满一个核。

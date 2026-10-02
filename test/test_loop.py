@@ -153,6 +153,45 @@ def test_finishing_the_loop_is_a_clean_stop():
     assert _drive(_args(loop=1), _Gate(False, True), []) == [1]
 
 
+def test_opening_callback_fires_once_on_the_rising_edge():
+    """开关从关翻到开的那一瞬间回调一次，一直开着不会再叫。
+
+    跟随器就靠这一下把"上一帧推了多少、误差变成多少"那笔配对清掉：关着的那段
+    时间一帧都没有，那笔配对还停在上一次开镜的最后一帧上，不清的话再开镜第一帧
+    拿它去跟新误差比，配的不是同一件事，反推出来的灵敏度能差几十倍。
+    跟随器自己只看得见帧，看不见开关，所以这个上升沿只能在这里认。
+    """
+    opened = []
+    gate = _Gate(False, False, True, True)
+    list(runmode.gated_frames(_args(loop=4), gate, [].append,
+                             idle_interval=0,
+                             on_open=lambda: opened.append(1)))
+    assert len(opened) == 1
+
+
+def test_every_new_engagement_gets_its_own_reset():
+    """按两次右键就是两个上升沿，两次都要回调。
+
+    用户原话是"我右键可能点无数次"—— 每一轮都得算新的一轮，
+    不能只在第一次按的时候清。
+    """
+    opened = []
+    gate = _Gate(True, True, False, False, True)
+    assert list(runmode.gated_frames(_args(loop=2), gate, [].append,
+                                    idle_interval=0,
+                                    on_open=lambda: opened.append(1))) == [1, 2]
+    assert len(opened) == 2
+
+
+def test_no_opening_callback_without_a_gate():
+    """--always 没有开关，压根没有"开镜"这一刻，一次都不许回调。"""
+    opened = []
+    assert list(runmode.gated_frames(_args(loop=3), None, [].append,
+                                     idle_interval=0,
+                                     on_open=lambda: opened.append(1))) == [1, 2, 3]
+    assert opened == []
+
+
 # ----------------------------------------------------------------------
 # 三、前台 / 后台
 # ----------------------------------------------------------------------

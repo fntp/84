@@ -309,8 +309,14 @@ def _run_frames(a, det, out, log, coords, coords_mode, say, gate, follower):
     total_ms = []
     continuous = a.loop <= 0
 
+    # 每次开镜都把跟随器里"上一帧推了多少、误差变成多少"那笔配对清掉：
+    # 关着的那段时间一帧都没有，那笔配对还停在上一次跟随的最后一帧上，
+    # 不清的话开镜第一帧会拿它去跟新误差比，配错了就把准星甩出去。
+    # 标定好的灵敏度不受影响（那是这台机器的性质，见 Follower.reset）。
+    on_open = None if follower is None else follower.reset
+
     try:
-        for i in runmode.gated_frames(a, gate, say):
+        for i in runmode.gated_frames(a, gate, say, on_open=on_open):
             t0 = time.perf_counter()
             img = grab(a.region)
             boxes, scores, classes = det.infer(img, a.conf, a.iou)

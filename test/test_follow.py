@@ -207,6 +207,83 @@ def test_failed_move_does_not_count_as_a_move():
 
 
 # ----------------------------------------------------------------------
+# 五、开关从关翻到开：上一轮那笔配对必须作废
+# ----------------------------------------------------------------------
+
+class _Screen:
+    """假游戏，只做 x 轴：推 dx 个计数，目标相对准星就少 k*dx 个像素。
+
+    单轴够用 —— 这一节要证的是"开镜第一帧有没有拿上一轮的数据去标定"，
+    哪个轴都一样。k 是这台机器的灵敏度，测试里当未知数（实现那边不许偷看）。
+    """
+
+    def __init__(self, k, miss):
+        self.k = k
+        self.miss = miss        # 目标相对准星的 x 偏移，正数在右边
+        self.calls = []
+
+    def __call__(self, dx, dy):
+        self.calls.append((dx, dy))
+        self.miss -= self.k * dx
+
+    def frame(self):
+        return [_t(CROSSHAIR[0] + self.miss, CROSSHAIR[1])]
+
+
+def test_reset_drops_the_pairing_left_over_from_the_last_engagement():
+    """开镜第一帧不许拿上一轮那笔配对去标定。
+
+    现象就是"开了右键之后鼠标先乱动几下"。_learn() 比的是"上一帧推了多少计数、
+    误差因此变成多少"；开关关着的那段时间一帧都没有，_last 还停在上一次跟随的
+    最后一帧上。开镜第一帧拿它跟新目标的误差去比，配的根本不是同一件事 ——
+    反推出来的灵敏度可以差几十倍，倍率被压到很小，第一下几乎没推动。
+
+    清掉之后这一帧走的是探测帧那条老路，跟刚启动时一模一样。
+    """
+    game = _Screen(4.0, 400)
+    f = _follower(game, [], auto_gain=True)
+    f.update(game.frame())
+    assert game.calls == [(8, 0)]           # 探测帧：400 * 0.02 = 8
+
+    game.miss = -600                        # 关镜那段时间一帧都没有，目标挪到左边
+    f.reset()
+    f.update(game.frame())
+    assert game.calls[-1] == (-12, 0), '清过之后这一帧没按探测帧走'
+
+    # 对照：不清会是什么样。这里只钉"少一大截"这个方向，不钉具体数字 ——
+    # 具体数字会随探测帧的参数变，但那句"第一帧几乎没推动"的毛病不会。
+    game2 = _Screen(4.0, 400)
+    f2 = _follower(game2, [], auto_gain=True)
+    f2.update(game2.frame())
+    game2.miss = -600
+    f2.update(game2.frame())
+    assert abs(game2.calls[-1][0]) < 12, (
+        f'对照没复现出"第一帧只推一点点"，推了 {game2.calls[-1][0]} 个计数')
+
+
+def test_reset_keeps_the_calibration():
+    """清配对不等于清标定：灵敏度是这台机器和这个游戏的性质，跟开关没关系。
+
+    第二下开镜要的是"直接按标定好的倍率贴上去"，不是重新探一遍 ——
+    用户的原话是"点三次四次也要一样快"。
+    """
+    game = _Screen(4.0, 400)
+    f = _follower(game, [], auto_gain=True)
+    for _ in range(4):
+        f.update(game.frame())
+    assert abs(game.miss) <= 12, f'四帧还没贴上，还差 {game.miss}'
+
+    game.miss = 400                         # 换个目标，又差 400 像素
+    f.reset()
+    f.update(game.frame())
+
+    # k=4 像素/计数 -> 倍率 0.7/4 = 0.175 -> 400 * 0.175 = 70 个计数。
+    # 要是 reset 把标定也清了，这一帧会退回探测帧，只推 8 个。
+    assert abs(game.calls[-1][0]) > 40, (
+        f'标定被 reset 一起清掉了，这一帧只推了 {game.calls[-1][0]} 个计数')
+
+
+# ----------------------------------------------------------------------
 # 迷你测试运行器（没有 pytest 时的退路）
 # ----------------------------------------------------------------------
 

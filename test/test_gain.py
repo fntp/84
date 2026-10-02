@@ -125,6 +125,51 @@ def test_it_never_swings_past_the_target():
                 last = now
 
 
+def test_it_stays_stable_on_a_scoped_high_sensitivity_game():
+    """开镜放大之后一个计数转的像素会涨好几倍 —— 那种机器上也不许摆。
+
+    实测出来的坏样子（miss=400）：k=40 时第一帧把目标推到对面同样远的距离，
+    之后每帧换一次方向，误差一直是 400，鼠标就在两个方向之间反复横跳；
+    k=50 更糟，误差每帧乘 1.5 一路发散，直到目标被甩出画面、下一帧检不到了，
+    跟随才停手 —— 用户的原话就是"开了右键之后鼠标一秒以内换好几次位置，
+    最后等鼠标换到一个根本没有敌人的方向之后它才停下来"。
+
+    根子是倍率下限 GAIN_MIN 把校正钳死了：标定要求每帧消掉七成误差，
+    需要的倍率是 GAIN_FRACTION/k，k 一超过 GAIN_FRACTION/GAIN_MIN 就被抬到
+    那个下限，每帧的误差乘数变成 1 - GAIN_MIN*k。k=20 时正好是 0（永远不动），
+    k=40 时是 -1（原样摆动），再大就发散。下限本来只是防"标定算出个 0"，
+    不该在这个区间起作用。
+    """
+    for k in (20.0, 30.0, 40.0, 50.0, 80.0):
+        game = _Game(k)
+        f = _follower(game)
+        for i in range(12):
+            f.update(game.frame())
+        assert game.off() <= DEADZONE, (
+            f'k={k} 十二帧还没贴上，误差 {game.off():.1f}（摆上了）')
+
+
+def test_the_probe_never_flings_the_target_out_of_view():
+    """还没标定的第一帧不许把目标甩出画面。
+
+    画面就这么大：准星在正中，目标一旦被推到离中心半个屏宽（1920 的屏幕是
+    960 像素）以外，下一帧就检不出来了 —— best 变成 None，鼠标再也不动，
+    用户看到的是"甩到一个根本没有敌人的方向，然后就停在那儿了"。
+    目标能看见就说明它本来在 960 以内，第一帧没道理把它推出去。
+
+    k 按最大 50 算：开镜放大 6~8 倍时，一个计数转几十个像素是够得着的。
+    """
+    half = 960
+    for k in (20.0, 30.0, 40.0, 50.0):
+        for miss in (100, 400, 900):
+            game = _Game(k, miss=miss)
+            _follower(game).update(game.frame())
+            off = abs(game.error()[0])
+            assert off <= half, (
+                f'k={k} miss={miss}: 第一帧就把目标甩到 {off:.0f} 像素外，'
+                f'超过半屏 {half}，下一帧就找不着了')
+
+
 def test_a_diagonal_target_converges_too():
     """斜着的目标也收敛：两个轴共用一个倍率，投影反推出来的灵敏度仍然对。"""
     game = _Game(3.0)
