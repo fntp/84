@@ -1,0 +1,107 @@
+========================================
+ SunOne 自瞄（ai_5.0.3_CUDA）操作步骤
+========================================
+
+拉完代码后就看这个文件。
+
+这个文件管的是 F:\aifz\ai_5.0.3_CUDA 里那套 SunOne 自瞄，
+和本仓库的跟随工具是两回事，互不影响。
+
+游戏设置：窗口化跑（你现在就是 1920x1080 窗口化，不用改）。
+不要用独占全屏 —— 独占全屏下这个工具抓不到画面。
+
+当前症状：按住右键之后准星绕着目标转圈，贴不上去。
+抓屏已经好了（控制台不再刷 [DDA] DuplicateOutput failed），问题在瞄准倍率：
+每帧该转多少角度，是拿 config.ini 里的 fovX/fovY 和 [Games] 里那组标定值
+算出来的。这几个数跟你的游戏对不上，再叠上"预测 + 卡尔曼"，就会从
+"贴不准"变成"一直绕圈"。所以先关掉预测和卡尔曼、把速度压到 0.2，
+看它能不能变成"慢慢贴上去"。
+
+
+---- 1. 关掉 ai.exe -------------------------------------------------
+
+   点它那个黑窗口，按 Ctrl+C。
+   关不掉就直接点窗口右上角的 X。
+
+
+---- 2. 改 config.ini（PowerShell 里整块复制粘贴，回车） -----------
+
+cd F:\aifz\ai_5.0.3_CUDA
+Copy-Item .\config.ini .\config.ini.bak -Force
+$set = @{'predictionInterval'='0'; 'kalman_enabled'='false'; 'minSpeedMultiplier'='0.2'; 'maxSpeedMultiplier'='0.2'; 'fovX'='90'; 'fovY'='60'}
+$lines = Get-Content .\config.ini
+foreach ($k in $set.Keys) {
+  $found = $false
+  $lines = $lines | ForEach-Object { if ($_ -match "^\s*$([regex]::Escape($k))\s*=") { $found = $true; "$k = $($set[$k])" } else { $_ } }
+  if (-not $found) { $lines += "$k = $($set[$k])" }
+}
+$lines | Set-Content .\config.ini
+Get-Content .\config.ini | Select-String -Pattern 'fovX|fovY|SpeedMultiplier|prediction|kalman'
+
+   跑完最后会打印 6 行，对一下：
+
+     fovX = 90
+     fovY = 60
+     minSpeedMultiplier = 0.2
+     maxSpeedMultiplier = 0.2
+     predictionInterval = 0
+     kalman_enabled = false
+
+   每一行改的是什么：
+
+     predictionInterval = 0      关掉"预测目标下一帧在哪"。
+     kalman_enabled = false      关掉卡尔曼滤波。
+                                 这两项都是靠估计目标的运动速度去提前量，
+                                 标定不对的时候，它们会把绕圈放大成一直转。
+                                 先关掉，确认能贴上去，再一个一个开回来。
+     minSpeedMultiplier = 0.2    每帧真正推出去的鼠标量 = 算出来的量 × 这个系数。
+     maxSpeedMultiplier = 0.2    太小贴不上，太大冲过头，先固定成 0.2 试。
+     fovX = 90 / fovY = 60       游戏的水平 / 垂直视野。
+                                 默认的 106 / 74 是 CS 系的值，先按 90 / 60 试。
+                                 你游戏里 FOV 填的是多少，这里就改成多少。
+
+   改坏了不要紧：config.ini.bak 是改之前的那一份，覆盖回去就还原了。
+
+
+---- 3. 启动 -------------------------------------------------------
+
+cd F:\aifz\ai_5.0.3_CUDA
+.\ai.exe
+
+   起来会打印那几行热键（右键瞄准 / F2 退出 / F3 暂停 / F4 重载配置）。
+   控制台里不应该再出现 [DDA] DuplicateOutput failed。
+
+
+---- 4. 进游戏试 ---------------------------------------------------
+
+   进游戏，找个敌人，准星对着他，按住鼠标右键别松，看准星怎么走。
+
+   三种结果，分别说明：
+
+     · 慢慢贴上去、贴上就不动了
+         → 方向和倍率对了。接着回去调手感：速度 0.2 太慢就往 0.3、0.4 提。
+     · 冲过头再飞回来、来回蹦
+         → 倍率还是偏大：fovX / fovY 往小调，或者把 Game Profile 里的
+           Sensitivity 往大调（这个值是除下去的，调大 = 每次推得更少）。
+     · 还在绕圈
+         → 把第 5 步那几件事发我，我按你的游戏算该填多少。
+
+
+---- 5. 回报 -------------------------------------------------------
+
+   回来告诉我四件事：
+
+     1. 还绕圈吗？
+     2. 是慢慢贴、冲过头、还是完全不动？
+     3. 什么游戏？游戏里 FOV 填的多少？鼠标 DPI 和游戏内灵敏度各是多少？
+     4. Mouse → Input Method 里现在选的是什么（WIN32 / KMBOX_NET / MAKCU …）。
+
+
+---- 附：悬浮窗怎么开 ---------------------------------------------
+
+   悬浮窗（就是改参数的图形窗口）是 ai.exe 起来之后，按键盘上的 Home 键。
+
+   不是 Windows 键。Home 一般在方向键上方那一排（Ins / Del / Home / End /
+   PgUp / PgDn 六个键里的一个）；笔记本上没有独立 Home 键的话按 Fn + Home。
+
+   上面第 2 步是直接改文件，不开悬浮窗也一样能改。
