@@ -397,3 +397,69 @@ Get-Content $p | Select-String 'circle_fov'
 
 $p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|snapRadius|nearRadius|speedCurveExponent|snapBoostFactor'
 
+
+---- 附五：Prediction 页微调 —— 想自己试"更平滑、不抖" ---------------
+
+   位置：悬浮窗左侧 **Aim** 分组 → **Prediction** 页（图标是条曲线）。
+
+   这页分两段：上面是"往前猜多远"（Prediction），下面是卡尔曼滤波。
+   两个是配合关系 ——
+     · 外推：往前猜 → 猜准了更跟手，猜错了就是"一帧左一帧右跳"
+     · 卡尔曼：只把位置本身抹平，不往前猜
+
+   ── 先确认：往前猜现在是关着的 ──────────────────────────
+
+     Prediction Interval                0.00     ← 归零
+     Kalman Compensate Inference Delay   不勾     ← false
+     Kalman Additional Predict (ms)       0.0    ← 归零
+
+     界面会显示一行红字 `Prediction is disabled.` —— 这是正常的，就是关了。
+     看现在的值：
+
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'predictionInterval|kalman_enabled|kalman_compensate_detection_delay|kalman_additional|kalman_measurement_noise|kalman_velocity_damping|kalman_process_noise'
+
+   ── 想更平滑：把卡尔曼打开（只平滑、不往前猜）──────────
+
+     勾上 `Enable Kalman Filter`。
+
+     注意一件事：**卡尔曼关着的时候，程序用的是原始检测框位置，
+     一点平滑都没有**（源码里那个分支直接把 position 设成测量值）。
+     所以"关掉卡尔曼"有时候反而更抖。开着它 + 外推为 0 = 只滤波不预测。
+
+     想更平滑（代价：跟手变慢，打移动目标会有点拖）：
+       Kalman Measurement Noise    默认 35     往大调：80 → 150 → 300
+       Kalman Process Noise Pos    默认 40     往小调：20 → 10 → 5
+       Kalman Velocity Damping     默认 0.08   往大调：0.2 → 0.4 → 0.8
+     觉得太肉、跟不上人，就往反方向调回去。
+     一次只动一个，动完打一会儿，再动下一个。
+
+     这几个一般不用碰：
+       Kalman Process Noise Vel    默认 1800    速度响应快慢
+       Kalman Max Velocity         默认 20000   速度上限
+       Kalman Warmup Frames        默认 2       刚锁上目标头几帧不做速度估计；
+                                                刚换目标时有个小跳就加到 3~5
+       Kalman Reset Timeout (s)    默认 0.5     多久没目标就重置滤波器
+
+   ── 想再补一点"跟手" ───────────────────────────────────
+
+     卡尔曼开着的情况下，可以把 Prediction Interval 从 0.00 抬一点点：
+     0.00 → 0.01 → 0.02，再往上就开始飘了。
+
+     ⚠️ 顺序不能反：这个"往前猜"只有**卡尔曼开着**时才是安全的，
+        因为速度是滤波过的。卡尔曼关着的时候往前猜，用的就是原始
+        逐帧抖动 —— 那就是你之前遇到的"一帧往左一帧往右、跳得飞快"。
+        要记牢：**先开卡尔曼，再抬 Prediction Interval**。
+
+   ── 还是有小抖 ─────────────────────────────────────────
+
+     那就不是滤波的问题了，是"最后贴上去那一段"，回 Movement 页（附四）：
+
+       Snap Boost Factor   默认 1.15 → 往下调 1.0 / 0.9
+       Snap Radius         默认 1.5  → 往下调 1.0 / 0.5
+
+   ── 一句话总结这页怎么用 ───────────────────────────────
+
+     抖 = 往前猜（三个值必须保持 0 / false / 0）
+     小抖抹不平 = 开卡尔曼，加大 Measurement Noise、加大 Velocity Damping
+     想跟手一点 = 卡尔曼开着的前提下，Prediction Interval 抬到 0.01~0.02
+

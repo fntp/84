@@ -122,6 +122,50 @@ Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak6 F:\aifz\ai_5.0.3_CUDA\config.ini
 
 
 --------------------------------------------------------------
+ 第四步：想调得更平滑（Prediction 页 / 卡尔曼）
+--------------------------------------------------------------
+
+面板上调最直观：左侧 **Aim** 分组 → **Prediction** 页。
+
+这页上面三个是"往前猜"（抖的来源），现在是关着的，别开回来：
+
+  Prediction Interval                0.00
+  Kalman Compensate Inference Delay  不勾
+  Kalman Additional Predict (ms)     0.0
+
+下面整段是卡尔曼滤波。**卡尔曼关着的时候，程序用的是原始检测框位置，
+一点平滑都没有**；开着它 = 只平滑、不往前猜，能把小抖动抹平。
+
+想把配置改成"平滑版"（开着卡尔曼、外推仍为 0）：
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak7" -Force
+$t = [IO.File]::ReadAllText($p)
+$set = @{'kalman_enabled'='true';'predictionInterval'='0';'kalman_compensate_detection_delay'='false';'kalman_additional_prediction_ms'='0'}
+foreach($k in @($set.Keys)){
+  $line = "$k = $($set[$k])"
+  $re = '(?m)^\s*' + [regex]::Escape($k) + '\s*=.*$'
+  if($t -match $re){ $t = $t -replace $re, $line }
+  else { $i = $t.IndexOf("`n["); if($i -lt 0){ $t = $t.TrimEnd() + "`r`n" + $line } else { $t = $t.Insert($i+1, $line + "`r`n") } }
+}
+[IO.File]::WriteAllText($p, $t)
+Get-Content $p | Select-String 'kalman_enabled|predictionInterval|kalman_compensate_detection_delay|kalman_additional'
+===== 复制到这里结束 =====
+
+打印出 `kalman_enabled = true`、另外三个是 0 / false / 0 就成了
+（备份 config.ini.bak7）。按 F4 重载。
+
+平滑程度不用改文件 —— 在 Prediction 页里拖这两个滑块，拖着就生效：
+
+  Kalman Measurement Noise   默认 35     往大拖：80 → 150 → 300（更平滑）
+  Kalman Velocity Damping    默认 0.08   往大拖：0.2 → 0.4 → 0.8（更稳）
+
+觉得太肉、跟不上人，就往回拖。一次只动一个，动完打一会儿再动下一个。
+其余 Kalman 开头的滑块一般不用碰。各参数含义看 SUNONE-STEPS.txt 的"附五"。
+
+
+--------------------------------------------------------------
  要还原的话
 --------------------------------------------------------------
 
@@ -132,5 +176,9 @@ Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak4 F:\aifz\ai_5.0.3_CUDA\config.ini
 瞄准点还原：
 
 Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak5 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+平滑版还原（第四步）：
+
+Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak7 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
 
 还原完按 F4。
