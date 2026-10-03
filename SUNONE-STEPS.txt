@@ -213,7 +213,7 @@ Copy-Item .\config.ini.bak .\config.ini -Force
 
    看现在这几个值是多少：
 
-$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|prediction|kalman|circle_fov|tracker_enabled|active_game|^\[Games\]|^\S+\s*=\s*\d+\.?\d*,\d'
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|snapRadius|nearRadius|speedCurveExponent|snapBoostFactor|prediction|kalman|circle_fov|tracker_enabled|active_game|^\[Games\]|^\S+\s*=\s*\d+\.?\d*,\d'
 
 
 ---- 附三：好几个人同框时，老是换目标 -------------------------------
@@ -300,3 +300,71 @@ Get-Content $p | Select-String 'circle_fov'
      Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak6 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
 
    还原完按 F4。
+
+
+---- 附四：Aim → Movement 页每个参数是什么意思 ----------------------
+
+   悬浮窗左侧 **Aim** 分组 → **Movement** 页。从上到下一共三组
+   （分组标题在界面上不显示，按控件名字认，顺序就是下面这个顺序）。
+
+   ── 第一组：FOV ─────────────────────────────────────────
+
+     FOV X    默认 106    游戏的水平视野角（度）
+     FOV Y    默认 74     游戏的垂直视野角（度）
+
+     这两个要填**游戏里真实的 FOV 数值**。工具拿它把"目标离准星多少个
+     像素"换算成"要转多少度"，再按 Profiles 页里的灵敏度换成鼠标计数。
+
+       填小了 → 以为每像素转的角度小 → 推得不够、追不上、贴不上
+       填大了 → 推过头、容易抖
+
+     所以"倍率怎么调都差一点点"时，先回来确认这两个是不是游戏真实值。
+     106 / 74 是 CS 的常用值，别的游戏差多少要按实际填。
+
+   ── 第二组：Speed Multiplier ─────────────────────────────
+
+     Min Speed Multiplier   默认 0.1   离准星远时的速度倍率（下限）
+     Max Speed Multiplier   默认 0.1   已经贴近目标时的速度倍率（上限）
+
+     就是"推多快"。**两个数填一样 = 固定倍率、不随远近变**（你现在就是
+     这样）。拉开成两个不同的数 = 远处快、近处慢（近处慢是为了不过冲）。
+
+     ⚠️ 一个看不出来的坑：程序里对 60fps 抓帧会**再乘 0.5**
+        （源码里是 corr = 30 / 抓帧帧率，为了让不同帧率手感一致）。
+        也就是说面板上填 0.2，在 60fps 下实际生效的是 0.1。
+        觉得"数填得挺大却没劲"多半就是这个。
+
+   ── 第三组：Target correction ────────────────────────────
+
+     这一组只管"最后一段怎么贴上去"。
+
+     Snap Radius           默认 1.5    （范围 0.1 ~ 5.0）
+       贴到多近算"已经到了"。距离小于它时不再按曲线减速，改成用一个
+       略微放大过的**固定**速度顶最后一下 —— 免得最后几个像素推得太慢、
+       一直差一点点贴不上。
+
+     Snap Boost Factor     默认 1.15   （范围 0.01 ~ 4.0）
+       上面"顶最后一下"的速度 = Min Speed Multiplier × 这个数。
+       1.0 = 不额外加速；调大 = 进圈后顶得更狠（贴得更死，但更容易小抖）。
+
+     Near Radius           默认 25.0   （范围 1.0 ~ 40.0）
+       多近算"近"。这个距离以内速度按曲线从慢到快；超出这个距离就直接
+       按距离线性给速度（越远越快）。
+       注意距离是在**检测区域**里量的（一个 320 像素见方的框），
+       所以 25 是那个框里的 25 像素，不是屏幕上的 25 像素。
+
+     Speed Curve Exponent  默认 3.0    （范围 0.1 ~ 10.0）
+       这条曲线的形状。值越大 = 贴近时速度压得越狠（起步温柔、最后一段
+       慢），拉开距离才快起来；值越小 = 越接近一条直线（起手就冲）。
+
+   ── 这张页面对应什么毛病 ────────────────────────────────
+
+     · 抖 / 跳                 → 不在这页，看 附三 和 Prediction 页（外推）
+     · 稳定地贴不上 / 冲过头   → 先核 FOV X / FOV Y，再动 Speed Multiplier
+     · 总差最后一两像素贴不上  → Snap Boost Factor 从 1.15 往上调一点（1.3 / 1.5）
+     · 贴上了但一直小抖        → Snap Boost Factor 往下调，或把 Snap Radius 调小
+
+   查当前这一页的值：
+
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'; Get-Content $p|Select-String 'fovX|fovY|SpeedMultiplier|snapRadius|nearRadius|speedCurveExponent|snapBoostFactor'
+
