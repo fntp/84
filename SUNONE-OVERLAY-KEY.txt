@@ -7,14 +7,68 @@
 
 
 --------------------------------------------------------------
- 现在先做这一件：把面板改回 10 月 2 号晚上最后那套设置
+ 现在先做这两件事（10 月 3 号的毛病全在这两条）
 --------------------------------------------------------------
 
-不用还原文件、不用跑脚本。按 F8 打开面板，对着下面一项一项改。
-（没列到的项**都别动**。）
+第一件 —— 把「只打身子不打头」关掉
+
+  按 F8 打开面板 → 左侧 **Aim** 分组 → 点 **Target** 页 →
+  最上面那个 `Disable Headshot`，把前面的勾**去掉**。
+
+  这个勾的含义是「别用头框、只打身子」。勾上之后程序把所有不是
+  player（身子）的框都丢掉，瞄准点固定落在身子上胸（框顶往下 15%
+  的位置）—— 就是你现在「人站我面前打他都不锁头」。
+  去掉勾，头框会重新被用上，瞄准点自动挪到头上。
+  （面板里改一下别处就存回去了，按一下 F4 更保险。）
+
+第二件 —— 把倍率从 0.1 改回 0.05
+
+  面板上的倍率滑块**最小只能拖到 0.1**，0.05 只能改文件。
+  下面这一整块复制进 PowerShell 回车：
+
+===== 从这里开始复制 =====
+$p='F:\aifz\ai_5.0.3_CUDA\config.ini'
+Copy-Item $p "$p.bak8" -Force
+(Get-Content $p) -replace '^\s*minSpeedMultiplier\s*=.*','minSpeedMultiplier = 0.05' -replace '^\s*maxSpeedMultiplier\s*=.*','maxSpeedMultiplier = 0.05' | Set-Content $p
+Get-Content $p | Select-String 'SpeedMultiplier'
+===== 复制到这里结束 =====
+
+  跑完打印这两行就成了（原文件备份成 config.ini.bak8）：
+
+      minSpeedMultiplier = 0.05
+      maxSpeedMultiplier = 0.05
+
+  然后回 ai.exe 那个黑窗口按一下 **F4**。
+
+  0.05 就是你 10 月 2 号晚上满意的那套值。面板上一拖就变成 0.1，
+  正好是它的两倍 —— 倍率翻倍就把瞄准环路推过了头，开始左右晃，
+  而且改得越大晃得越厉害。这不是「参数没调对」，是回到翻倍之前就没事。
+
+为什么倍率一高就左右晃（看一眼就行，不用记）
+
+  这个工具每帧做两件事：算目标该往哪转，然后**把自己这一帧已经
+  发出去的鼠标移动，从目标位置上减掉**（怕自己越瞄越过）。
+  减掉多少，靠的是它以为「1 个鼠标计数 = 游戏转多少度」和「游戏
+  FOV 是多少」这两个数。它们跟你的游戏对不上时，每帧就会多减或
+  少减一点，误差逐帧累积 → 冲过头 → 下一帧往反方向冲回去 →
+  左右来回甩。
+
+  倍率就是这套补偿的增益：倍率越大，每帧的误差越大，越容易过头。
+  0.05 在临界以内，0.1 越过去了 —— 这就是「怎么调都偏一点、一提
+  倍率就晃」的来历。根治要把 FOV 和 [Games] 标定对（SUNONE-STEPS.txt
+  第 6 步），在那之前 0.05 就是能用的值。
+
+如果改完还晃
+
+  按 F8 → **Aim** 分组 → **Prediction** 页 → 勾上 `Enable Kalman Filter`。
+  卡尔曼**关着**的时候程序用的是原始检测框位置、一点平滑都没有，小抖
+  会原样传下去；开着它 = 只平滑、不往前猜，能把这层抖抹掉。
+  （那页上面三个「往前猜」的值保持 0.00 / 不勾 / 0.0，别动。）
+
+其余面板项（**没列到的都别动**，照下面填回去）
 
   Aim → Target
-    Disable Headshot                   不勾  ← 最要紧，勾上就只打身子不打头
+    Disable Headshot                   不勾  ← 见上面「第一件」
     Auto Aim                           不勾
     Approximate Head Y Offset          0.10
     Approximate Body Y Offset          0.15
@@ -22,15 +76,15 @@
   Aim → Movement
     FOV X                              90
     FOV Y                              60
-    Min Speed Multiplier               0.1
-    Max Speed Multiplier               0.1
+    Min Speed Multiplier               0.1  ← 面板只能到 0.1；真实值靠上面那条命令设成 0.05，
+    Max Speed Multiplier               0.1     所以面板显示 0.1 是对的，别再去拖它
     Snap Radius                        拖到最小
     Snap Boost Factor                  1.0
     Near Radius                        25.0
     Speed Curve Exponent               3.0
 
   Aim → Prediction
-    Enable Kalman Filter               不勾
+    Enable Kalman Filter               先不勾；还晃就勾上（见上面）
     Prediction Interval                0.00
     Kalman Compensate Inference Delay  不勾
     Kalman Additional Predict (ms)     0.0
@@ -43,21 +97,15 @@
   Vision → AI Model
     Confidence Threshold               0.10
 
-改完按一下 F4（面板里拖的当场就生效，按一下更保险）。
+  改完按一下 F4。
 
-两处说明（先照上面填，别纠结）：
-
-  · Min / Max Speed Multiplier
-      10 月 2 号晚上这两个值是直接改文件设成 0.05 的，面板上的滑块最小
-      只能到 0.1，所以面板里填 0.1。要精确回到 0.05 得改文件，需要的话
-      说一声，我给你一行命令。
   · FOV X / FOV Y
       10 月 2 号晚上最后是 90 / 60。如果面板上现在显示 106 / 74，那是
       程序自带的默认值，不是你要的那套，按 90 / 60 填。
 
-另外：Snap Radius / Snap Boost Factor 这两个，在 Min 和 Max 填一样的时候
-本来就不起任何作用（速度恒等于那个倍率，进不进那个圈都一样），填回去只是
-为了跟那晚完全一致，不用管它俩。
+  · Snap Radius / Snap Boost Factor
+      Min 和 Max 填一样的时候它俩本来就不起作用（速度恒等于那个倍率，
+      进不进那个圈都一样），填回去只是为了跟那晚完全一致。
 
 
 --------------------------------------------------------------
@@ -230,6 +278,10 @@ Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak4 F:\aifz\ai_5.0.3_CUDA\config.ini
 瞄准点还原：
 
 Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak5 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
+
+倍率还原（回到改 0.05 之前）：
+
+Copy-Item F:\aifz\ai_5.0.3_CUDA\config.ini.bak8 F:\aifz\ai_5.0.3_CUDA\config.ini -Force
 
 平滑版还原（第四步）：
 
